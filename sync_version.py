@@ -32,7 +32,7 @@ def main():
     os.makedirs(os.path.dirname(OUT_FILE), exist_ok=True)
     with open(OUT_FILE, 'w', encoding='utf-8') as f:
         f.write(js)
-    print(f'已生成 {os.path.relpath(OUT_FILE, ROOT)} (APP_VERSION = {v})')
+    print(f'Generated {os.path.relpath(OUT_FILE, ROOT)} (APP_VERSION = {v})')
 
 
 if __name__ == '__main__':
