@@ -1,13 +1,27 @@
-name: Build Windows EXE (LinkCOM)
+name: 编译 Windows EXE (LinkCOM)
 
-on:
-  push:
-    tags:
-      - 'v*'
-  workflow_dispatch:
+on:  # 定义触发工作流的事件
+  # release:  # 当发布新的GitHub release时触发
+  #   types: [ published ]  # 当发布新的GitHub release时触发
+  workflow_dispatch:  # 手动触发
+    inputs:  # 输入的参数
+      # tag:  # 输入的标签
+      #   description: '构建的版本号'  # 手动触发时输入的标签描述
+      #   required: true  # 必须输入
+      #   default: 'test'  # 默认标签为'test'
+  # schedule:  # 定时触发
+  #   # 每天 UTC 时间 00:00 运行 (Cron 语法)
+  #   - cron: '0 0 * * *'
+  # workflow_run:
+  #   workflows: ["GoReleaser Workflow"]  # 指定工作流完成时触发
+  #   types: [completed]  # 当工作流完成时触发
+  # push:
+  #   branches: [ "main", "master" ]  # 当指定分支有代码推送时触发
+  # pull_request:
+  #   branches: [ "main", "master" ]  # 当指定分支有代码拉取请求时触发
 
-permissions:
-  contents: write
+permissions:  # 工作流权限
+  contents: write  # 工作流需要读取仓库内容的权限
 
 jobs:
   build-windows:
@@ -21,7 +35,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Read version (single source: VERSION)
+      - name: Read version (single source of truth VERSION)
         id: ver
         shell: bash
         run: |

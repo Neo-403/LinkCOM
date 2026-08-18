@@ -98,12 +98,12 @@ jobs:  # 工作流作业
             type=ref,event=tag
             # 如果是手动触发，使用输入的标签(使用inputs:tag的值)
             type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
-            # 如果是main分支推送，使用分支名
-            type=ref,event=branch
-            # 如果是PR，使用PR编号
-            type=ref,event=pr
-            # 使用提交SHA的短格式
-            type=sha,format=short
+            # # 如果是main分支推送，使用分支名
+            # type=ref,event=branch
+            # # 如果是PR，使用PR编号
+            # type=ref,event=pr
+            # # 使用提交SHA的短格式
+            # type=sha,format=short
             # 当事件是 release, workflow_dispatch, 或 schedule 时，生成 latest 标签
             type=raw,value=latest,enable=${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
           # 定义标签生成规则参考：https://github.com/docker/metadata-action#tags
