@@ -1,0 +1,33 @@
+{
+  "server": "ws://127.0.0.1:8080",
+  "basePath": "",
+  "room": "",
+  "pwd": "",
+  "mode": "serial",
+  "serial": {
+    "port": "",
+    "baudRate": 9600,
+    "dataBits": 8,
+    "stopBits": 1,
+    "parity": "none",
+    "flowControl": "none",
+    "encoding": "utf8"
+  },
+  "tcpClient": {
+    "localIp": "",
+    "localPort": "",
+    "remoteHost": "",
+    "remotePort": ""
+  },
+  "tcpServer": {
+    "localIp": "",
+    "localPort": ""
+  },
+  "display": {
+    "modeText": true,
+    "modeHex": false,
+    "encoding": "utf8",
+    "autoScroll": true,
+    "paused": false
+  }
+}

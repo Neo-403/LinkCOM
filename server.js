@@ -165,7 +165,7 @@ wss.on('connection', (ws) => {
           }
           room.links.add(ws);
           // 若已有串口参数, 立即推给新加入的链接端 (解决后加入看不到配置的问题)
-          if (room.cfg) send(ws, { t: 'serial-config', cfg: room.cfg });
+          if (room.cfg) send(ws, { t: 'serial-config', cfg: room.cfg.cfg, mode: room.cfg.mode, agg: room.cfg.agg });
         }
 
         ws.meta = { roomId, role };
@@ -181,7 +181,8 @@ wss.on('connection', (ws) => {
         if (!room) return;
         if (role === 'share') {
           // 来自共享端（串口回执 或 本页发送），始终广播给所有链接端
-          room.links.forEach((l) => send(l, { t: 'serial-data', buf: msg.buf, from: 'share', src: msg.src || 'share' }));
+          // kind: 'tx'=共享端主动发送(链接端显示为共享端发送), 默认=通道回执(链接端显示为←接收)
+          room.links.forEach((l) => send(l, { t: 'serial-data', buf: msg.buf, from: 'share', src: msg.src || 'share', kind: msg.kind }));
         } else if (role === 'link') {
           // 来自链接端：转发给共享端写串口
           if (room.share) send(room.share, { t: 'serial-data', buf: msg.buf, from: 'link', src: 'link' });
@@ -195,12 +196,12 @@ wss.on('connection', (ws) => {
         const room = rooms.get(roomId);
         if (!room) return;
         if (role === 'share') {
-          // 共享端主动变更: 通知所有链接端并缓存
-          room.cfg = msg.cfg;
-          room.links.forEach((l) => send(l, { t: 'serial-config', cfg: msg.cfg }));
+          // 共享端主动变更: 通知所有链接端并缓存 (含 mode/agg)
+          room.cfg = { cfg: msg.cfg, mode: msg.mode, agg: msg.agg };
+          room.links.forEach((l) => send(l, { t: 'serial-config', cfg: msg.cfg, mode: msg.mode, agg: msg.agg, from: 'share' }));
         } else if (role === 'link') {
-          // 链接端请求修改串口参数: 转发给共享端 (由其重设串口)
-          if (room.share) send(room.share, { t: 'serial-config', cfg: msg.cfg, from: 'link' });
+          // 链接端请求修改参数: 转发给共享端 (由其重设串口/聚合)
+          if (room.share) send(room.share, { t: 'serial-config', cfg: msg.cfg, mode: msg.mode, agg: msg.agg, from: 'link' });
         }
         break;
       }

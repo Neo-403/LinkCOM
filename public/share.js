@@ -12,6 +12,23 @@
   let room = '';
   let paused = false;
   let rxBytes = 0, txBytes = 0;
+  let serialBuf = new Uint8Array(0);  // 串口读取缓冲(时间窗口聚合用)
+  // 聚合参数(UI 可调, 持久化到 localStorage)
+  let FLUSH_MS = 80;   // 聚合窗口: 该时间内的连续数据合并为一条
+  let MAX_BUF = 4096;  // 缓冲上限(字节): 防止持续大数据无间隔时无限累积
+  function loadAggCfg() {
+    try {
+      const s = JSON.parse(localStorage.getItem('linkcom_agg') || '{}');
+      if (typeof s.flushMs === 'number') FLUSH_MS = Math.max(0, Math.min(2000, s.flushMs));
+      if (typeof s.maxBuf === 'number') MAX_BUF = Math.max(256, Math.min(1024 * 1024, Math.round(s.maxBuf)));
+    } catch (e) {}
+  }
+  function saveAggCfg() {
+    try {
+      localStorage.setItem('linkcom_agg', JSON.stringify({ flushMs: FLUSH_MS, maxBuf: MAX_BUF }));
+    } catch (e) {}
+  }
+  loadAggCfg();
   let enc = 'utf8';                  // utf8 | gbk
   const history = [];                // { ts, cls, buf:Uint8Array }
   const MAX_HISTORY = 5000;
@@ -80,9 +97,12 @@
   function buildLineEl(item, wantText, wantHex) {
     const wrap = document.createElement('div');
     wrap.className = 'line ' + item.cls;
-    const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = item.ts;
+    if ($('modeTs').checked) {
+      const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = item.ts;
+      wrap.appendChild(ts);
+    }
     const dir = document.createElement('span'); dir.className = 'dir'; dir.textContent = dirLabel(item.cls);
-    wrap.appendChild(ts); wrap.appendChild(dir);
+    wrap.appendChild(dir);
     if (wantText && wantHex) {
       const t = document.createElement('span'); t.className = 'pane-text'; t.textContent = textOf(item.buf);
       const h = document.createElement('span'); h.className = 'pane-hex hex'; h.textContent = hexLines(item.buf);
@@ -145,21 +165,21 @@
       if (room) setTimeout(connectWs, 2000);
     };
     ws.onerror = () => {};
-    ws.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch { return; } handleServer(m); };
+    ws.onmessage = async (ev) => { let m; try { m = JSON.parse(ev.data); } catch { return; } await handleServer(m); };
   }
   function doJoin() {
     if (!wsOpen) return;
     ws.send(JSON.stringify({ t: 'join', room, role: 'share', pwd: $('pwd').value }));
   }
-  function handleServer(m) {
+  async function handleServer(m) {
     switch (m.t) {
       case 'ok':
         joined = true;
         wsDot.className = 'status-dot on'; wsStat.textContent = '共享中';
         roomStat.textContent = m.room; peerStat.textContent = m.peers.links;
         appendSys(`已进入共享房间 ${m.room}`);
-        // 立即下发当前串口参数, 让链接端马上看到
-        if (wsOpen) ws.send(JSON.stringify({ t: 'serial-config', cfg: serialCfg() }));
+        // 立即下发当前完整配置(含 mode + 串口参数 + 聚合参数), 让链接端马上看到
+        sendFullCfg();
         break;
       case 'err':
         setHint('服务器错误: ' + m.msg, true); appendSys('错误: ' + m.msg, 'err');
@@ -179,9 +199,27 @@
         appendSys('链接端断开: ' + (m.reason || ''), 'sys');
         break;
       case 'serial-config':
-        if (m.from === 'link' && m.cfg) applyRemoteCfg(m.cfg);
+        if (m.from === 'link') {
+          if (m.cfg) await applyRemoteCfg(m.cfg);
+          if (m.agg) applyRemoteAgg(m.agg);
+        }
         break;
     }
+  }
+  // 链接端修改聚合参数: 实时更新本端聚合设置并回写输入框
+  function applyRemoteAgg(agg) {
+    let changed = false;
+    if (typeof agg.flushMs === 'number') {
+      FLUSH_MS = Math.max(0, Math.min(2000, agg.flushMs));
+      if ($('flushMs')) $('flushMs').value = FLUSH_MS;
+      changed = true;
+    }
+    if (typeof agg.maxBufKb === 'number') {
+      MAX_BUF = Math.max(1, Math.min(1024, agg.maxBufKb)) * 1024;
+      if ($('maxBuf')) $('maxBuf').value = Math.round(MAX_BUF / 1024);
+      changed = true;
+    }
+    if (changed) { saveAggCfg(); appendSys(`链接端修改聚合参数: ${FLUSH_MS}ms / ${Math.round(MAX_BUF / 1024)}KB`, 'sys'); }
   }
   // 链接端请求修改串口参数: 更新本地表单并重启串口 (Web Serial 打开后不能直接改参数)
   async function applyRemoteCfg(cfg) {
@@ -192,7 +230,7 @@
     if (cfg.parity) $('parity').value = String(cfg.parity).toLowerCase();
     if (cfg.flowControl) $('flow').value = String(cfg.flowControl).toLowerCase();
     if (cfg.encoding) enc = cfg.encoding;
-    if (joined && wsOpen) ws.send(JSON.stringify({ t: 'serial-config', cfg: serialCfg() }));
+    if (joined && wsOpen) sendFullCfg();
     appendSys(`链接端请求修改串口参数: ${cfg.baudRate}/${cfg.dataBits}/${cfg.stopBits}/${cfg.parity}/${cfg.flowControl}/${cfg.encoding.toUpperCase()}`, 'sys');
     if (portOpen) {
       const err = validateSerialOpts();
@@ -209,8 +247,11 @@
   function appendSys(text, cls) {
     if (paused) return;
     const div = document.createElement('div'); div.className = 'line ' + (cls || 'sys');
-    const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = nowTs();
-    div.appendChild(ts); div.appendChild(document.createTextNode('[系统] ' + text));
+    if ($('modeTs').checked) {
+      const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = nowTs();
+      div.appendChild(ts);
+    }
+    div.appendChild(document.createTextNode('[系统] ' + text));
     term.appendChild(div);
   }
 
@@ -252,12 +293,13 @@
       });
       writer = port.writable.getWriter();
       portOpen = true; keepReading = true; readLoopRunning = false;
+      serialBuf = new Uint8Array(0);  // 每次打开串口重置缓冲
       readLoop();
       $('btnOpen').textContent = '关闭串口';
       $('btnOpen').classList.remove('teal');
       appendSys(`串口已打开 ${$('baud').value} ${$('dbits').value}${$('parity').value[0].toUpperCase()}${$('sbits').value}`);
       // 已共享则通知参数变更
-      if (joined && wsOpen) ws.send(JSON.stringify({ t: 'serial-config', cfg: serialCfg() }));
+      if (joined && wsOpen) sendFullCfg();
     } catch (e) { setHint('打开串口失败: ' + e.message, true); }
   }
   async function closePort() {
@@ -274,6 +316,41 @@
     return { baudRate: $('baud').value, dataBits: $('dbits').value, stopBits: $('sbits').value,
       parity: $('parity').value, flowControl: $('flow').value, encoding: enc };
   }
+  // 当前聚合参数 (供链接端读取/同步)
+  function aggCfg() {
+    return { flushMs: FLUSH_MS, maxBufKb: Math.round(MAX_BUF / 1024) };
+  }
+  // 完整配置: 含 mode(共享端通道类型) + 串口参数 + 聚合参数
+  function fullCfg() {
+    return { cfg: serialCfg(), mode: 'serial', agg: aggCfg() };
+  }
+  function sendFullCfg() {
+    if (joined && wsOpen) ws.send(JSON.stringify(Object.assign({ t: 'serial-config' }, fullCfg())));
+  }
+  function concatBytes(a, b) {
+    const c = new Uint8Array(a.length + b.length);
+    c.set(a, 0); c.set(b, a.length); return c;
+  }
+  let flushTimer = null;
+  function flushShareBuffer() {
+    flushTimer = null;
+    if (serialBuf.length) {
+      const line = serialBuf; serialBuf = new Uint8Array(0);
+      emitShareData(line);
+    }
+  }
+  function scheduleFlush() {
+    if (flushTimer) clearTimeout(flushTimer);
+    flushTimer = setTimeout(flushShareBuffer, FLUSH_MS);
+  }
+  function emitShareData(lineBuf) {
+    if (!lineBuf || !lineBuf.length) return;
+    // 去掉行尾 \r, 避免显示多余回车
+    if (lineBuf[lineBuf.length - 1] === 0x0d) lineBuf = lineBuf.slice(0, -1);
+    rxBytes += lineBuf.length; rxStat.textContent = fmtBytes(rxBytes);
+    pushHistory(lineBuf, 'rx'); appendData(lineBuf, 'rx');
+    if (wsOpen && joined) ws.send(JSON.stringify({ t: 'serial-data', buf: bufToB64(lineBuf), src: 'share' }));
+  }
   async function readLoop() {
     if (readLoopRunning) return;
     readLoopRunning = true;
@@ -284,14 +361,18 @@
           const { value, done } = await reader.read();
           if (done) break;
           if (value && value.length) {
-            rxBytes += value.length; rxStat.textContent = fmtBytes(rxBytes);
-            pushHistory(value, 'rx'); appendData(value, 'rx');
-            if (wsOpen && joined) ws.send(JSON.stringify({ t: 'serial-data', buf: bufToB64(value), src: 'share' }));
+            // 累积进缓冲, 用时间窗口聚合: Web Serial chunk 边界任意, 短期内的多项合并为一条
+            serialBuf = concatBytes(serialBuf, value);
+            if (serialBuf.length >= MAX_BUF) flushShareBuffer();  // 超上限立即输出
+            else scheduleFlush();
           }
         }
       } catch (e) { appendSys('读串口: ' + e.message, 'err'); }
       finally { try { reader.releaseLock(); } catch {} }
     }
+    // 串口结束时立即输出残留缓冲
+    if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+    flushShareBuffer();
     readLoopRunning = false;
   }
   async function writeSerial(buf) {
@@ -346,7 +427,7 @@
     writeSerial(buf);
     txBytes += buf.length; txStat.textContent = fmtBytes(txBytes);
     pushHistory(buf, 'tx'); appendData(buf, 'tx');
-    $('sendText').value = ''; setHint('');
+    setHint('');
   }
 
   // ---------- 快速发送 (QuickSend) ----------
@@ -476,15 +557,28 @@
   });
   $('modeText').onchange = rerender;
   $('modeHex').onchange = rerender;
-  $('encoding').onchange = () => { enc = $('encoding').value; rerender(); if (joined && wsOpen) ws.send(JSON.stringify({ t: 'serial-config', cfg: serialCfg() })); };
+  $('modeTs').onchange = rerender;
+  $('encoding').onchange = () => { enc = $('encoding').value; rerender(); if (joined && wsOpen) sendFullCfg(); };
   $('btnPause').onclick = () => { paused = !paused; $('btnPause').textContent = paused ? '继续' : '暂停'; };
   $('btnClear').onclick = () => { history.length = 0; term.innerHTML = ''; };
   $('btnExportHistory').onclick = exportHistory;
   ['baud', 'dbits', 'sbits', 'parity', 'flow'].forEach((id) => {
     $(id).addEventListener('change', () => {
-      if (joined && wsOpen) ws.send(JSON.stringify({ t: 'serial-config', cfg: serialCfg() }));
+      if (joined && wsOpen) sendFullCfg();
     });
   });
+
+  // 聚合参数 UI (聚合时间窗口 / 缓冲上限), 改动即时生效并持久化
+  $('flushMs').value = FLUSH_MS;
+  $('maxBuf').value = Math.round(MAX_BUF / 1024);
+  $('flushMs').onchange = () => {
+    const v = parseInt($('flushMs').value, 10);
+    if (!isNaN(v)) { FLUSH_MS = Math.max(0, Math.min(2000, v)); saveAggCfg(); }
+  };
+  $('maxBuf').onchange = () => {
+    const v = parseInt($('maxBuf').value, 10);
+    if (!isNaN(v)) { MAX_BUF = Math.max(1, Math.min(1024, v)) * 1024; saveAggCfg(); }
+  };
 
   // 房间码默认随机
   $('room').value = 'R' + Math.random().toString(36).slice(2, 6).toUpperCase();

@@ -47,7 +47,14 @@
           <label>&nbsp;</label>
           <button class="btn teal" id="btnConnect">连接房间</button>
         </div>
-        <div class="field cfg-field" style="flex:1; min-width:200px">
+        <div class="field cfg-field">
+          <label>共享端协议</label>
+          <div class="cfg-edit">
+            <span class="cfg-item"><b id="shareProto" style="font-size:13px;color:var(--accent-2)">未知</b></span>
+          </div>
+          <div class="hint" id="cfgComNote" style="display:none;color:var(--muted)">共享端为网络模式, 不显示串口参数 (仅可同步聚合参数)</div>
+        </div>
+        <div class="field cfg-field cfg-com" style="flex:1; min-width:200px">
           <label>共享端串口参数 (可修改)</label>
           <div class="cfg-edit">
             <span class="cfg-item"><label>波特率</label>
@@ -68,9 +75,21 @@
             <span class="cfg-item"><label>编码</label>
               <select id="cfgEnc"></select>
             </span>
+          </div>
+          <div class="hint">修改串口参数后点击「应用配置」发送至共享端</div>
+        </div>
+        <div class="field cfg-field" style="min-width:220px">
+          <label>聚合参数 (可修改)</label>
+          <div class="cfg-edit">
+            <span class="cfg-item"><label>聚合(ms)</label>
+              <input id="cfgFlushMs" type="number" min="0" max="2000" value="80" style="width:78px">
+            </span>
+            <span class="cfg-item"><label>缓冲(KB)</label>
+              <input id="cfgMaxBuf" type="number" min="1" max="1024" value="4" style="width:78px">
+            </span>
             <button class="btn teal" id="btnApplyCfg">应用配置</button>
           </div>
-          <div class="hint" id="cfgHint">修改串口参数后点击「应用配置」发送至共享端</div>
+          <div class="hint">控制共享端数据聚合, 修改后点击「应用配置」发送至共享端</div>
         </div>
       </div>
     </div>
@@ -80,6 +99,7 @@
         <span>显示:</span>
         <label class="hint"><input type="checkbox" id="modeText" checked> 文本</label>
         <label class="hint"><input type="checkbox" id="modeHex"> HEX</label>
+        <label class="hint"><input type="checkbox" id="modeTs" checked> 时间戳</label>
         <span style="color:var(--border)">|</span>
         <label class="hint">编码
           <select id="encoding" style="background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-size:12px"></select>
@@ -157,10 +177,20 @@
     </div>
   </div>
 
+  <div class="app-credit" id="appCredit">LinkCOM v1.0.0 | by ZWZW</div>
+
+  <script src="version.js"></script>
   <script src="gbk.js"></script>
   <script src="serial-config.js"></script>
   <script src="quick.js"></script>
   <script src="link.js"></script>
   <script src="theme.js"></script>
+  <script>
+    (function () {
+      var v = window.APP_VERSION || '1.0.0';
+      var el = document.getElementById('appCredit');
+      if (el) el.textContent = 'LinkCOM v' + v + ' | by ZWZW';
+    })();
+  </script>
 </body>
 </html>

@@ -1,0 +1,66 @@
+name: Build Windows EXE (LinkCOM)
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Read version (single source: VERSION)
+        id: ver
+        shell: bash
+        run: |
+          V=$(tr -d '[:space:]' < VERSION)
+          echo "VERSION=$V" >> "$GITHUB_ENV"
+          echo "version=$V"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller websocket-client pyserial PySide6
+
+      - name: Sync web version.js
+        run: python sync_version.py
+
+      - name: Build single-file EXE
+        shell: bash
+        run: |
+          pyinstaller --noconfirm --clean \
+            --name "LinkCOM_Win_v${{ env.VERSION }}" \
+            --windowed --onefile \
+            --icon "desktop/logo.ico" \
+            --add-data "desktop/logo.png;." \
+            --add-data "VERSION;." \
+            --hidden-import=websocket \
+            --hidden-import=websocket-client \
+            --hidden-import=serial \
+            --hidden-import=PySide6 \
+            desktop/main.py
+
+      - name: Verify artifact exists
+        shell: bash
+        run: ls -lh "dist/LinkCOM_Win_v${{ env.VERSION }}.exe"
+
+      - name: Create GitHub Release & upload
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: LinkCOM v${{ env.VERSION }}
+          files: dist/LinkCOM_Win_v${{ env.VERSION }}.exe
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
