@@ -290,5 +290,20 @@
 
   setHint('输入共享端提供的房间码与密码(若有), 点击连接即可远程调试串口。');
   setSendEnabled(false);
+
+  // 支持从共享端切换过来时通过 ?room=&pwd= 自动预填并连接同一房间
+  const qp = new URLSearchParams(location.search);
+  const qRoom = qp.get('room'), qPwd = qp.get('pwd');
+  if (qRoom) $('room').value = qRoom;
+  if (qPwd) $('pwd').value = qPwd;
   connectWs();
+  if (qRoom) {
+    setHint('正在连接共享房间 ' + qRoom + ' …');
+    // 等待 WebSocket 连上后由 onopen 自动 doJoin; 若已连上则主动连接
+    if (wsOpen) doConnect();
+    else {
+      const _open = ws.onopen;
+      ws.onopen = () => { if (_open) _open(); doConnect(); };
+    }
+  }
 })();

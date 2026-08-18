@@ -60,8 +60,8 @@ docker compose down
 
 单独构建/运行:
 ```bash
-docker build -t linkcom:latest .
-docker run -d --name linkcom -p 8080:8080 -e PORT=8080 --restart unless-stopped linkcom:latest
+docker build -t 918178/linkcom:latest .
+docker run -d --name linkcom -p 8080:8080 -e PORT=8080 --restart unless-stopped 918178/linkcom:latest
 ```
 
 > 镜像基于 `node:20-alpine`，仅含生产依赖，以非 root 用户运行。

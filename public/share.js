@@ -403,6 +403,48 @@
     enc = SERIAL_UI.DEFAULTS.encoding;
   }
 
+  // 右上「切换到链接端」：新开标签页打开 link.html, 并带上当前房间码/密码, 方便直接连接同一房间 (保留本页)
+  (function () {
+    const sw = $('switchLink');
+    if (!sw) return;
+    sw.addEventListener('click', (e) => {
+      e.preventDefault();
+      const params = new URLSearchParams();
+      const r = $('room').value.trim();
+      const p = $('pwd').value.trim();
+      if (r) params.set('room', r);
+      if (p) params.set('pwd', p);
+      const q = params.toString();
+      // 新开窗口, 保留当前共享端页面
+      window.open('link.html' + (q ? '?' + q : ''), '_blank', 'noopener');
+    });
+  })();
+
+  // 分享房间链接：生成含 room+pwd 的 link.html 链接, 点击复制给对端, 对端打开即可直接进入房间
+  (function () {
+    const btn = $('btnShareLink');
+    if (!btn) return;
+    btn.addEventListener('click', async () => {
+      const r = $('room').value.trim();
+      if (!r) { alert('请先填写并连接房间码后再分享链接'); return; }
+      const p = $('pwd').value.trim();
+      const params = new URLSearchParams();
+      params.set('room', r);
+      if (p) params.set('pwd', p);
+      const url = location.origin + location.pathname.replace(/share\.html$/, '') + 'link.html?' + params.toString();
+      try {
+        await navigator.clipboard.writeText(url);
+        const old = btn.textContent;
+        btn.textContent = '已复制链接 ✓';
+        setTimeout(() => { btn.textContent = old; }, 1500);
+        appendSys('已复制房间链接到剪贴板: ' + url);
+      } catch (err) {
+        // 剪贴板不可用时降级为 prompt 让用户手动复制
+        window.prompt('复制以下房间链接发送给对端:', url);
+      }
+    });
+  })();
+
   $('btnShare').onclick = startShare;
   $('btnSend').onclick = doSend;
   $('sendText').addEventListener('keydown', (e) => {
