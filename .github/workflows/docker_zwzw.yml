@@ -1,0 +1,162 @@
+name: 构建 Docker镜像  # Actions名称，docker
+
+on:  # 定义触发工作流的事件
+  # release:  # 当发布新的GitHub release时触发
+  #   types: [ published ]  # 当发布新的GitHub release时触发
+  workflow_dispatch:  # 手动触发
+    inputs:  # 输入的参数
+      # tag:  # 输入的标签
+      #   description: '构建的版本号'  # 手动触发时输入的标签描述
+      #   required: true  # 必须输入
+      #   default: 'test'  # 默认标签为'test'
+  # schedule:  # 定时触发
+  #   # 每天 UTC 时间 00:00 运行 (Cron 语法)
+  #   - cron: '0 0 * * *'
+  # workflow_run:
+  #   workflows: ["GoReleaser Workflow"]  # 指定工作流完成时触发
+  #   types: [completed]  # 当工作流完成时触发
+  # push:
+  #   branches: [ "main", "master" ]  # 当指定分支有代码推送时触发
+  # pull_request:
+  #   branches: [ "main", "master" ]  # 当指定分支有代码拉取请求时触发
+
+permissions:  # 工作流权限
+  contents: read  # 工作流需要读取仓库内容的权限
+  packages: write  # 工作流需要推送包到 GitHub Container Registry 的权限
+
+# 可以有多个工作流,多个工作流依次运行
+# 一个工作流运行由一个或多个作业组成，这些作业可以顺序或并行运行
+jobs:  # 工作流作业
+  image:  # 作业名称,唯一标识
+    name: 从 Dockerfile 构建映像  # 工作流作业名称
+    runs-on: ubuntu-latest  # 在最新的Ubuntu环境中运行
+    steps:  # 工作流步骤
+
+      # 检出代码
+      - name: 检查代码是否在工作目录  # 步骤名称
+        uses: actions/checkout@v4  # 引用流程
+        # with:  # 参数
+        #   fetch-depth: '0'  # 获取深度，0表示获取所有提交记录
+
+      # 设置QEMU，用于构建多平台镜像
+      - name: 设置 QEMU  # 步骤名称
+        uses: docker/setup-qemu-action@v3  # 引用流程
+
+      # 设置Docker Buildx，用于构建和推送多平台镜像
+      - name: 设置 Docker Buildx  # 步骤名称
+        uses: docker/setup-buildx-action@v3  # 引用流程
+
+      # 获取当前日期(格式：年月日,如 20251009)
+      - name: 获取当前日期
+        id: get-date
+        run: echo "date=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+        shell: bash
+
+      # 获取镜像标签名称
+      - name: 获取 Image Tag  # 步骤名称
+        # 注意 | 后注释会有问题故放在这
+        # x${{ github.event.inputs.tag }} == x""，-z "${{ github.event.inputs.tag }}"，-n "${{ github.event.inputs.tag }}" 均为判断是否为空
+        # 如果提供了标签，则使用提供的标签
+        # 否则使用当前日期作为标签
+        run: |
+          if [ x${{ github.event.inputs.tag }} == x"" ]; then
+            echo "TAG_NAME=${GITHUB_REF#refs/*/}" >> $GITHUB_ENV
+          else
+            echo "TAG_NAME=${{ steps.get-date.outputs.date }}" >> $GITHUB_ENV
+          fi
+
+      # 登录到 Docker Hub
+      - name: 登录 DockerHub  # 步骤名称
+        uses: docker/login-action@v3  # 引用流程
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}  # Docker Hub 用户名(需在secrets中配置)
+          password: ${{ secrets.DOCKERHUB_TOKEN }}  # Docker Hub Token(需在secrets中配置)
+
+      # 登录到 GitHub Container Registry
+      - name: 登录 GitHub Container Registry  # 步骤名称
+        uses: docker/login-action@v3  # 引用流程
+        with:
+          registry: ghcr.io  # GitHub Container Registry 地址
+          username: ${{ github.actor }}  # GitHub 用户名
+          password: ${{ secrets.GITHUB_TOKEN }}  # GitHub Token(无需配置,由 GitHub 提供)
+
+      # 生成镜像标签
+      - name: 生成镜像标签
+        id: meta  # 步骤 ID,用于后续引用
+        uses: docker/metadata-action@v5
+        with:
+          # 同时指定Docker Hub和GHCR的镜像名称
+          images: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}  # Docker Hub 镜像的名称(用户名/仓库名称)
+            ghcr.io/${{ github.repository }}  # GHCR 镜像的名称(ghcr.io/用户名称/仓库名称)
+          # 默认的 latest 标签行为，可由下面的 tags 规则精确控制
+          flavor: |
+            latest=false
+          # 标签规则，根据事件类型和输入参数生成标签
+          tags: |
+            # 如果是release事件，使用release标签
+            type=ref,event=tag
+            # 如果是手动触发，使用输入的标签(使用inputs:tag的值)
+            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
+            # 如果是main分支推送，使用分支名
+            type=ref,event=branch
+            # 如果是PR，使用PR编号
+            type=ref,event=pr
+            # 使用提交SHA的短格式
+            type=sha,format=short
+            # 当事件是 release, workflow_dispatch, 或 schedule 时，生成 latest 标签
+            type=raw,value=latest,enable=${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
+          # 定义标签生成规则参考：https://github.com/docker/metadata-action#tags
+          # type=ref,event=branch  # 规则 1: 推送到分支时，使用分支名 (如 main, dev)
+          # type=ref,event=tag  # 规则 2: 推送到标签时，使用标签名 (如 v1.0.0)
+          # type=semver,pattern={{major}}  # 规则 3: 对于语义化版本标签，生成主版本号标签 (如 v1.2.3 -> 1)
+          # type=semver,pattern={{major}}.{{minor}}  # 规则 4: 对于语义化版本标签，生成主次版本号标签 (如 v1.2.3 -> 1.2)
+          # type=sha,format=short  # 规则 5: 始终使用短SHA作为标签，确保每次构建都有唯一标识
+          # type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}  # 规则 6: 手动触发时，使用输入的值作为标签
+          # # 规则 7: 组合条件 - 在以下三种情况下生成 latest 标签：1. 发布 Release 时;2. 手动触发工作流时;3. 定时任务触发时
+          # type=raw,value=latest,enable=${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
+
+      # # 手动准备镜像标签(使用 docker/metadata-action 生成会更加方便)
+      # - name: 设置 Image Tags  # 步骤名称
+      #   # 注意 | 后注释会有问题故放在这
+      #   # 设置引用的Dockerfile路径(不需要,构建镜像时会定义标签) echo "DOCKERFILE_PATH=Dockerfile" >> $GITHUB_ENV
+      #   # 设置构建的镜像标签:版本号+latest(注意tag全小写)
+      #   run: |
+      #     echo "TAG=${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}:${{ env.TAG_NAME }}" >> $GITHUB_ENV
+      #     echo "TAG_LATEST=${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}:latest" >> $GITHUB_ENV
+
+      # 构建并推送镜像(可同时推送多个镜像,多个镜像平台)
+      - name: 编译并推送 ${{ github.event.repository.name }}镜像  # 步骤名称
+        uses: docker/build-push-action@v5  # 引用流程
+        with:  # 参数
+          context: .  # 构建上下文
+          file: ./Dockerfile  # 指定的Dockerfile
+          platforms: linux/amd64  # 构建的平台(测试构建,少一些快一点),多架构一般取决于使用的基础镜像支持架构
+          # platforms: linux/amd64,linux/386,linux/arm64/v8,linux/arm/v7,linux/arm/v6,linux/ppc64le,linux/riscv64,linux/s390x  # 构建的平台(正式构建,按需保留)
+          push: true  # 推送到仓库
+          # load: true  # 加载到本地(多构建平台不支持;若其它也需调用镜像则必须加载,如打包导出)
+          # 注意 | 后注释会有问题故放在这
+          # 传递构建参数(覆盖 ARG ${{ github.event.repository.name }}_VERSION=3.5.0 配置参数)
+          # build-args: |
+          #   ${{ github.event.repository.name }}_VERSION=${{ env.TAG_NAME }}
+          # 注意 | 后注释会有问题故放在这
+          # 推送的镜像标签(版本标签+latest)
+          # tags: |  # 使用手动指定标签
+          #   ${{ env.TAG }}
+          #   ${{ env.TAG_LATEST }}
+          tags: ${{ steps.meta.outputs.tags }}  # 使用metadata-action生成的标签
+          labels: ${{ steps.meta.outputs.labels }}  # 使用metadata-action生成的标签
+
+      # # 镜像打包为tar包
+      # - name: 镜像打包为tar包  # 步骤名称
+      #   # 注意 | 后注释会有问题故放在这
+      #   # 运行的具体指令,每行指令依次运行
+      #   run: |
+      #     docker save -o ${{ github.event.repository.name }}.tar ${{ secrets.DOCKERHUB_USERNAME }}/${{ github.event.repository.name }}:latest
+
+      # # 将构建好的镜像导出为tar包
+      # - name: Archive 导出内部文件  # 步骤名称
+      #   uses: actions/upload-artifact@v4  # 引用流程
+      #   with:  # 参数
+      #     name: ${{ github.event.repository.name }}.tar  # 导出的文件名称
+      #     path: ${{ github.event.repository.name }}.tar  # 导出的文件路径

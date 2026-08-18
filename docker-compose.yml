@@ -1,0 +1,16 @@
+services:
+  linkcom:
+    build: .
+    image: 918178/linkcom:latest
+    container_name: linkcom
+    restart: unless-stopped
+    ports:
+      - "${PORT:-18080}:8080"
+    environment:
+      - PORT=8080
+      # 子路径部署示例: 在 Nginx 反代到 /linkcom/ 时取消下面注释 (值必须与 Nginx location 一致, 不带末尾斜杠)
+      # BASE_PATH=/linkcom
+    # 若需 HTTPS / wss, 建议在宿主机用 Nginx 反代本端口,
+    # 或取消下面注释挂载证书并在 server.js 启用 TLS。
+    # volumes:
+    #   - ./certs:/app/certs:ro

@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "items": [
+    { "name": "AT 测试", "hex": false, "crlf": true, "data": "AT" },
+    { "name": "查询版本", "hex": false, "crlf": true, "data": "AT+VERSION?" },
+    { "name": "重启模块", "hex": false, "crlf": true, "data": "AT+RESET" },
+    { "name": "HEX 握手", "hex": true, "crlf": false, "data": "AA BB CC DD" },
+    { "name": "读取寄存器", "hex": true, "crlf": false, "data": "01 03 00 00 00 01 84 0A" }
+  ]
+}

@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>LinkCOM · 链接端 (远程调试)</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <span class="logo">LinkCOM</span>
+    <span class="tag">链接端 LINK</span>
+    <span class="spacer"></span>
+    <span class="stat"><span id="wsDot" class="status-dot"></span><span id="wsStat">未连接</span></span>
+    <span class="stat">房间: <b id="roomStat">-</b></span>
+    <span class="stat">共享端: <b id="shareStat">离线</b></span>
+    <span class="stat">RX <b id="rxStat">0</b> · TX <b id="txStat">0</b></span>
+    <a class="btn ghost" href="./" style="text-decoration:none">切换到共享端</a>
+  </header>
+
+  <main>
+    <div class="config-bar">
+      <div class="field">
+        <label>房间码</label>
+        <input class="room-input" id="room" placeholder="共享端提供的房间码" maxlength="16">
+      </div>
+      <div class="field">
+        <label>密码 (若设置)</label>
+        <input id="pwd" placeholder="留空则无密码" maxlength="32" type="password">
+      </div>
+      <div class="field">
+        <label>&nbsp;</label>
+        <button class="btn teal" id="btnConnect">连接房间</button>
+      </div>
+      <div class="field" style="flex:1; min-width:200px">
+        <label>共享端串口参数 (可修改)</label>
+        <div class="cfg-edit">
+          <span class="cfg-item"><label>波特率</label>
+            <select id="cfgBaud"></select>
+          </span>
+          <span class="cfg-item"><label>数据位</label>
+            <select id="cfgData"></select>
+          </span>
+          <span class="cfg-item"><label>停止位</label>
+            <select id="cfgStop"></select>
+          </span>
+          <span class="cfg-item"><label>校验位</label>
+            <select id="cfgParity"></select>
+          </span>
+          <span class="cfg-item"><label>流控</label>
+            <select id="cfgFlow"></select>
+          </span>
+          <span class="cfg-item"><label>编码</label>
+            <select id="cfgEnc"></select>
+          </span>
+          <button class="btn teal" id="btnApplyCfg">应用配置</button>
+        </div>
+        <div class="hint" id="cfgHint">等待共享端下发当前参数…</div>
+      </div>
+    </div>
+
+    <div class="terminal-wrap">
+      <div class="terminal-head">
+        <span>显示:</span>
+        <label class="hint"><input type="checkbox" id="modeText" checked> 文本</label>
+        <label class="hint"><input type="checkbox" id="modeHex"> HEX</label>
+        <span style="color:var(--border)">|</span>
+        <label class="hint">编码
+          <select id="encoding" style="background:var(--panel-2);color:var(--text);border:1px solid var(--border);border-radius:6px;padding:3px 6px;font-size:12px"></select>
+        </label>
+        <span class="spacer"></span>
+        <label class="hint"><input type="checkbox" id="autoScroll" checked> 自动滚动</label>
+        <button class="btn ghost" id="btnPause" style="padding:4px 10px;font-size:12px">暂停</button>
+        <button class="btn ghost" id="btnClear" style="padding:4px 10px;font-size:12px">清空</button>
+        <button class="btn ghost" id="btnExportHistory" style="padding:4px 10px;font-size:12px">导出历史</button>
+      </div>
+      <div id="terminal" class="split"></div>
+    </div>
+
+    <div class="send-bar" id="sendBar">
+      <textarea id="sendText" placeholder="先输入房间码并点击「连接房间」, 连接成功后此处可发送" disabled></textarea>
+      <div class="actions">
+        <button class="btn" id="btnSend" disabled>发送</button>
+        <label class="hint"><input type="checkbox" id="sendHex" disabled> HEX</label>
+        <label class="hint"><input type="checkbox" id="sendCRLF" checked disabled> 加\r\n</label>
+      </div>
+    </div>
+
+    <!-- 快速发送面板 -->
+    <section class="qs-panel" id="qsPanel">
+      <div class="qs-bar">
+        <strong>快速发送</strong>
+        <span id="qsSummary" class="qs-summary">加载中…</span>
+        <span class="grow"></span>
+        <button id="qsToggle" class="btn sm ghost">展开</button>
+        <button id="qsAddBtn" class="btn sm primary">添加</button>
+        <button id="qsResetBtn" class="btn sm">重置为默认</button>
+        <button id="qsClearBtn" class="btn sm danger">清空</button>
+        <button id="qsImportBtn" class="btn sm">导入</button>
+        <button id="qsExportBtn" class="btn sm">导出</button>
+      </div>
+      <div id="qsList" class="qs-list"></div>
+      <div class="qs-controls">
+        <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="qsCheckAll" checked> 全选(仅发送勾选项)</label>
+        <button id="qsSeqBtn" class="btn sm">顺序发送</button>
+        <button id="qsPollBtn" class="btn sm">轮询发送</button>
+        <button id="qsStopBtn" class="btn sm danger">停止</button>
+        <span id="qsRunState" class="qs-run-state stop">空闲</span>
+        <input id="qsImportFile" type="file" accept="application/json,.json" class="hidden">
+      </div>
+    </section>
+
+    <div class="hint" id="hint"></div>
+  </main>
+
+  <!-- 快速发送 编辑/添加 模态框 -->
+  <div id="qsModalMask" class="modal-mask hidden" style="display:none">
+    <div class="modal">
+      <h3>快速发送条目</h3>
+      <div class="row">
+        <label>名称<input id="qsEditName" type="text" placeholder="例如: 查询版本" maxlength="40"></label>
+      </div>
+      <div class="row">
+        <label>发送内容
+          <textarea id="qsEditData" placeholder="文本内容, 或 HEX 模式下的 'AA BB CC'"></textarea>
+        </label>
+      </div>
+      <div class="row">
+        <label style="flex-direction:row;align-items:center;gap:6px"><input id="qsEditHex" type="checkbox"> HEX 模式</label>
+        <label style="flex-direction:row;align-items:center;gap:6px"><input id="qsEditCrlf" type="checkbox" checked> 文本模式追加 \r\n</label>
+        <label>本条延迟(ms)<input id="qsEditDelay" type="number" value="0" min="0" inputmode="numeric"></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" id="qsEditCancel">取消</button>
+        <button class="btn primary" id="qsEditSave">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="gbk.js"></script>
+  <script src="serial-config.js"></script>
+  <script src="quick.js"></script>
+  <script src="link.js"></script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# 自动按文本处理，统一换行符（检出为 CRLF，仓库内为 LF）
+* text=auto
+
+# 明确声明文本文件
+*.js text
+*.html text
+*.css text
+*.json text
+*.md text
+*.yml text
+Dockerfile text
+
+# 二进制文件不转换
+*.png binary
+*.jpg binary
+*.exe binary

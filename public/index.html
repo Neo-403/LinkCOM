@@ -1,0 +1,15 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LinkCOM</title>
+  <script>
+    // 根据 ?mode=link 跳转到对应页面
+    const mode = new URLSearchParams(location.search).get('mode');
+    if (mode === 'link') location.replace('link.html' + location.search);
+    else location.replace('share.html' + location.search);
+  </script>
+</head>
+<body></body>
+</html>
