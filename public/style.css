@@ -362,3 +362,30 @@ main {
 /* ---------- 历史导出按钮 ---------- */
 .hist-actions { display: flex; gap: 8px; margin-left: auto; }
 
+/* ---------- 右下角署名 ---------- */
+.app-credit {
+  position: fixed;
+  right: 10px;
+  bottom: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  background: rgba(0,0,0,.25);
+  padding: 2px 8px;
+  border-radius: 10px;
+  pointer-events: none;
+  user-select: none;
+  z-index: 5;
+  opacity: .75;
+}
+
+/* ---------- 隐藏数字输入的步进箭头 (聚合/缓冲) ---------- */
+input[type=number]::-webkit-outer-spin-button,
+input[type=number]::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+input[type=number] {
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+

@@ -6,6 +6,7 @@
 
   let ws = null, wsOpen = false, joined = false;
   let shareOnline = false;           // 共享端是否在线 (可发送的前提)
+  let shareMode = 'serial';          // 共享端通道类型: serial | tcpClient | tcpServer
   let room = '';
   let paused = false;
   let rxBytes = 0, txBytes = 0;
@@ -67,16 +68,20 @@
     if (wantHex) return `[${item.ts}] ${dir} HEX: ${hexLines(item.buf).replace(/\n/g, ' ')}`;
     return `[${item.ts}] ${dir} 文本: ${textOf(item.buf)}`;
   }
-  // 方向标识：本端发出=Link_发送，共享端通道来的(回执/发送)=←接收
+  // 方向标识：本端发出=Link_发送，共享端主动发送=共享端发送，共享端通道来的(回执)=←接收
   function dirLabel(cls) {
     if (cls === 'tx') return '[Link_发送]';
+    if (cls === 'stx') return '[共享端发送]';
     return '[←接收]';
   }
   function buildLineEl(item, wantText, wantHex) {
     const wrap = document.createElement('div'); wrap.className = 'line ' + item.cls;
-    const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = item.ts;
+    if ($('modeTs').checked) {
+      const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = item.ts;
+      wrap.appendChild(ts);
+    }
     const dir = document.createElement('span'); dir.className = 'dir'; dir.textContent = dirLabel(item.cls);
-    wrap.appendChild(ts); wrap.appendChild(dir);
+    wrap.appendChild(dir);
     if (wantText && wantHex) {
       const t = document.createElement('span'); t.className = 'pane-text'; t.textContent = textOf(item.buf);
       const h = document.createElement('span'); h.className = 'pane-hex hex'; h.textContent = hexLines(item.buf);
@@ -103,8 +108,11 @@
   function appendSys(text, cls) {
     if (paused) return;
     const div = document.createElement('div'); div.className = 'line ' + (cls || 'sys');
-    const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = nowTs();
-    div.appendChild(ts); div.appendChild(document.createTextNode('[系统] ' + text));
+    if ($('modeTs').checked) {
+      const ts = document.createElement('span'); ts.className = 'ts'; ts.textContent = nowTs();
+      div.appendChild(ts);
+    }
+    div.appendChild(document.createTextNode('[系统] ' + text));
     term.appendChild(div);
   }
   // 把共享端下发的串口参数填充到可编辑表单
@@ -118,20 +126,45 @@
     if (cfg.encoding) { enc = cfg.encoding; $('cfgEnc').value = cfg.encoding; $('encoding').value = cfg.encoding; }
     rerender();
   }
-  // 把链接端修改后的参数回传给服务器 (再转发给共享端)
+  // 根据共享端通道类型调整链接端配置面板: TCP 模式隐藏 COM 配置并显示协议名
+  function updateShareModeUI(mode) {
+    shareMode = mode || 'serial';
+    const isSerial = shareMode === 'serial';
+    const labels = { serial: '串口 (COM)', tcpClient: 'TCP 客户端', tcpServer: 'TCP 服务器' };
+    const protoName = labels[shareMode] || shareMode;
+    const protoEl = $('shareProto');
+    if (protoEl) protoEl.textContent = protoName;
+    // 隐藏/显示 COM 相关配置项
+    document.querySelectorAll('.cfg-com').forEach((el) => { el.style.display = isSerial ? '' : 'none'; });
+    const comNote = $('cfgComNote');
+    if (comNote) comNote.style.display = isSerial ? 'none' : '';
+  }
+  // 把链接端修改后的参数(含聚合参数)回传给服务器 (再转发给共享端)
   function sendCfgToShare() {
     if (!joined || !wsOpen) { setHint('未连接房间, 无法应用配置', true); return; }
-    const cfg = {
-      baudRate: parseInt($('cfgBaud').value, 10),
-      dataBits: parseInt($('cfgData').value, 10),
-      stopBits: parseInt($('cfgStop').value, 10),
-      parity: $('cfgParity').value,
-      flowControl: $('cfgFlow').value,
-      encoding: $('cfgEnc').value,
+    // 聚合参数无论何种模式都下发, 使共享端按链接端设定的聚合工作
+    const agg = {
+      flushMs: parseInt($('cfgFlushMs').value, 10) || 0,
+      maxBufKb: parseInt($('cfgMaxBuf').value, 10) || 1,
     };
-    ws.send(JSON.stringify({ t: 'serial-config', cfg }));
+    let msg = { t: 'serial-config', agg, mode: shareMode };
+    // 仅串口模式同步 COM 参数
+    if (shareMode === 'serial') {
+      msg.cfg = {
+        baudRate: parseInt($('cfgBaud').value, 10),
+        dataBits: parseInt($('cfgData').value, 10),
+        stopBits: parseInt($('cfgStop').value, 10),
+        parity: $('cfgParity').value,
+        flowControl: $('cfgFlow').value,
+        encoding: $('cfgEnc').value,
+      };
+    }
+    ws.send(JSON.stringify(msg));
     $('cfgHint').textContent = '已发送配置到共享端';
-    appendSys(`已请求修改串口参数: ${cfg.baudRate}/${cfg.dataBits}/${cfg.stopBits}/${cfg.parity}/${cfg.flowControl}/${cfg.encoding.toUpperCase()}`, 'sys');
+    appendSys(shareMode === 'serial'
+      ? `已请求修改串口参数: ${msg.cfg.baudRate}/${msg.cfg.dataBits}/${msg.cfg.stopBits}/${msg.cfg.parity}/${msg.cfg.flowControl}/${msg.cfg.encoding.toUpperCase()}`
+      : `已请求修改聚合参数(共享端为${shareMode === 'tcpClient' ? 'TCP 客户端' : 'TCP 服务器'}, 仅同步聚合): ${agg.flushMs}ms / ${agg.maxBufKb}KB`,
+      'sys');
   }
 
   function wsUrl() { const proto = location.protocol === 'https:' ? 'wss' : 'ws'; const p = location.pathname.replace(/\/[^/]*$/, ''); const base = p && p !== '/' ? p : ''; return `${proto}://${location.host}${base}/ws`; }
@@ -180,12 +213,22 @@
         if (m.from === 'share') {
           const buf = b64ToBuf(m.buf);
           rxBytes += buf.length; rxStat.textContent = fmtBytes(rxBytes);
-          // 来自共享端通道的数据（串口回执 / 共享端发送）
-          pushHistory(buf, 'rx'); appendData(buf, 'rx');
+          // 来自共享端: kind='tx' 为共享端主动发送(显示为"共享端发送")，否则为通道回执(←接收)
+          const isTx = m.kind === 'tx';
+          pushHistory(buf, isTx ? 'stx' : 'rx'); appendData(buf, isTx ? 'stx' : 'rx');
         }
         break;
       case 'serial-config':
-        if (m.cfg) applyRemoteCfg(m.cfg);
+        if (m.from === 'share') {
+          if (m.mode) updateShareModeUI(m.mode);
+          if (m.cfg) applyRemoteCfg(m.cfg);
+          if (m.agg) {
+            $('cfgFlushMs').value = m.agg.flushMs;
+            $('cfgMaxBuf').value = m.agg.maxBufKb;
+          }
+          appendSys('已同步共享端配置', 'sys');
+          rerender();
+        }
         break;
       case 'closed':
         shareOnline = false;
@@ -221,7 +264,7 @@
     ws.send(JSON.stringify({ t: 'serial-data', buf: bufToB64(buf) }));
     txBytes += buf.length; txStat.textContent = fmtBytes(txBytes);
     pushHistory(buf, 'tx'); appendData(buf, 'tx');
-    $('sendText').value = ''; setHint('');
+    setHint('');
   }
 
   // ---------- 快速发送 (QuickSend) ----------
@@ -282,6 +325,7 @@
   $('sendText').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } });
   $('modeText').onchange = rerender;
   $('modeHex').onchange = rerender;
+  $('modeTs').onchange = rerender;
   $('encoding').onchange = () => { enc = $('encoding').value; rerender(); };
   $('btnPause').onclick = () => { paused = !paused; $('btnPause').textContent = paused ? '继续' : '暂停'; };
   $('btnClear').onclick = () => { history.length = 0; term.innerHTML = ''; };
