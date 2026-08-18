@@ -85,37 +85,77 @@ server {
 ```
 
 ### 子路径 (如 `https://your.domain/linkcom/`)
-程序已支持子路径部署，只需两处保持一致：
+程序已支持子路径部署，需两处保持一致：**① 后端设 `BASE_PATH` ② nginx 透传前缀**。
 
-1. **docker-compose 设置 `BASE_PATH`**（与 nginx 的 `location` 完全一致，不带末尾斜杠）：
-   ```yaml
-   environment:
-     - PORT=8080
-     - BASE_PATH=/linkcom
-   ```
-2. **nginx 反代时保留子路径前缀**（注意 `proxy_pass` 末尾**不要**加 `/`）：
-   ```nginx
-   server {
-       listen 443 ssl;
-       server_name your.domain;
+#### 1) docker-compose（与 Nginx 容器同网络，不暴露宿主端口）
+```yaml
+services:
+  linkcom:
+    # image: 918178/linkcom:latest  # DockerHub
+    image: ghcr.io/neo-403/linkcom:latest  # Ghcr.io
+    container_name: linkcom
+    restart: unless-stopped
+    # ports:            # 不映射到宿主, 仅走下面内网网络
+    #   - "8080:8080"
+    environment:
+      - PORT=8080
+      - BASE_PATH=/linkcom   # 子路径, 须与 nginx location 完全一致(不带末尾 /)
+    networks:
+      - nginx_default      # 与 nginx 容器同一网络才能反代
+# 加入 nginx 容器所在网络
+networks:
+  nginx_default:
+    external: true           # 使用已存在的网络(由 nginx 容器创建)
+    name: nginx_default    # 须与 nginx 容器使用的网络名一致
+```
+- `BASE_PATH=/linkcom` → 后端把静态页、WebSocket 都挂到 `/linkcom` 下（WS 实际路径 `/linkcom/ws`）。
+- 不写 `ports` 容器只在 `nginx_default` 内网可达，由 Nginx 暴露公网，更安全。
 
-       location /linkcom/ {
-           proxy_pass http://127.0.0.1:18080;   # 末尾不带 / , 保留 /linkcom 前缀转发给容器
-           proxy_http_version 1.1;
-           proxy_set_header Upgrade $http_upgrade;
-           proxy_set_header Connection "upgrade";
-           proxy_set_header Host $host;
-           proxy_set_header X-Real-IP $remote_addr;
-           proxy_read_timeout 3600s;
-       }
-   }
-   ```
-   访问地址：
-   - 共享端：`https://your.domain/linkcom/?mode=share`
-   - 链接端：`https://your.domain/linkcom/?mode=link`
+#### 2) Nginx 反代（保留子路径前缀）
+```nginx
+# 在 http {} 块定义(全局一次), 让普通请求与 WebSocket 升级都能正确转发
+map $http_upgrade $connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 443 ssl;
+    server_name your.domain;
+
+    # ===== LinkCOM 共享串口 (WebSocket 转发, 子路径 /linkcom) =====
+    # 前置: 后端容器已设 BASE_PATH=/linkcom
+    # 访问: https://your.domain/linkcom/share.html (共享端)
+    #       https://your.domain/linkcom/link.html  (链接端)
+    location /linkcom/ {
+        # 注意 proxy_pass 末尾【不要】加 "/" —— 否则会裁掉 /linkcom 前缀
+        # 透传后: /linkcom/share.html -> http://linkcom:8080/linkcom/share.html
+        #         /linkcom/ws         -> http://linkcom:8080/linkcom/ws
+        proxy_pass http://linkcom:8080;
+
+        proxy_http_version 1.1;                 # WebSocket 必须 1.1
+        proxy_set_header Upgrade $http_upgrade; # WebSocket 升级握手
+        proxy_set_header Connection $connection_upgrade; # 有升级则 upgrade, 否则 close
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 3600s;               # 长连接空闲超时, 须大于前端心跳/重连周期
+        proxy_send_timeout 3600s;
+        # client_max_body_size 30M;             # 共享文件等需更大上传体积时取消注释
+    }
+}
+```
+- `proxy_pass http://linkcom:8080;`（**无末尾 `/`**）是关键：把 `/linkcom` 前缀原样透传给后端，由 `BASE_PATH` 处理；若误加 `/` 会裁剪前缀导致 404。
+- `linkcom` 是 docker 服务名，需与 Nginx 容器在同一网络（`nginxui_default`）才能解析。
+- 前端 `link.js`/`share.js` 会从当前页面 URL 自动推导 WS 前缀（`/linkcom/ws`），无需手动配置。
+
+访问地址：
+- 共享端：`https://your.domain/linkcom/share.html`
+- 链接端：`https://your.domain/linkcom/link.html?room=房间码`
 
 > 注意：`BASE_PATH` 与 nginx `location /linkcom/` 必须一致。若用根路径部署，请勿设置 `BASE_PATH`，nginx 用上面的「根路径」配置即可。
-> WebSocket 路径会自动变为 `BASE_PATH + /ws`（如 `/linkcom/ws`），前端会从当前页面 URL 自动推导，无需手动配置。
+> WebSocket 路径会自动变为 `BASE_PATH + /ws`（如 `/linkcom/ws`），前端从页面 URL 自动推导，无需手动配置。
 
 ## 协议 (WebSocket `/ws`, JSON)
 - `join` `{t:"join",room,role:"share"|"link",pwd?}`
