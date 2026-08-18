@@ -38,6 +38,16 @@ jobs:  # 工作流作业
         # with:  # 参数
         #   fetch-depth: '0'  # 获取深度，0表示获取所有提交记录
 
+      # 读取根 VERSION 作为唯一应用版本来源 (供镜像 tag 与网页版本号使用)
+      - name: 读取版本号
+        id: ver
+        shell: bash
+        run: echo "VERSION=$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_ENV"
+
+      # 同步 Web 端 version.js, 保证镜像内网页显示的版本号与根 VERSION 一致
+      - name: 同步 Web 版本号
+        run: python sync_version.py
+
       # 设置QEMU，用于构建多平台镜像
       - name: 设置 QEMU  # 步骤名称
         uses: docker/setup-qemu-action@v3  # 引用流程
@@ -94,18 +104,14 @@ jobs:  # 工作流作业
             latest=false
           # 标签规则，根据事件类型和输入参数生成标签
           tags: |
+            # 应用版本号标签 (来自根 VERSION, 如 1.0.0), 始终生成
+            type=raw,value=${{ env.VERSION }}
+            # 始终生成 latest 标签
+            type=raw,value=latest
             # 如果是release事件，使用release标签
             type=ref,event=tag
             # 如果是手动触发，使用输入的标签(使用inputs:tag的值)
             type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event_name == 'workflow_dispatch' }}
-            # # 如果是main分支推送，使用分支名
-            # type=ref,event=branch
-            # # 如果是PR，使用PR编号
-            # type=ref,event=pr
-            # # 使用提交SHA的短格式
-            # type=sha,format=short
-            # 当事件是 release, workflow_dispatch, 或 schedule 时，生成 latest 标签
-            type=raw,value=latest,enable=${{ github.event_name == 'release' || github.event_name == 'workflow_dispatch' || github.event_name == 'schedule' }}
           # 定义标签生成规则参考：https://github.com/docker/metadata-action#tags
           # type=ref,event=branch  # 规则 1: 推送到分支时，使用分支名 (如 main, dev)
           # type=ref,event=tag  # 规则 2: 推送到标签时，使用标签名 (如 v1.0.0)
