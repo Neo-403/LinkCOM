@@ -14,6 +14,22 @@
   --radius: 10px;
 }
 
+/* 亮色主题 */
+html[data-theme="light"] {
+  --bg: #eef1f5;
+  --panel: #ffffff;
+  --panel-2: #f2f5f9;
+  --border: #d4dae2;
+  --text: #1c2733;
+  --muted: #5b6b7c;
+  --accent: #0d9488;
+  --accent-2: #2563eb;
+  --rx: #16a34a;
+  --tx: #2563eb;
+  --err: #dc2626;
+  --warn: #d97706;
+}
+
 * { box-sizing: border-box; }
 html, body { height: 100%; margin: 0; }
 body {
@@ -36,7 +52,8 @@ header {
   border-bottom: 1px solid var(--border);
   flex-wrap: wrap;
 }
-header .logo { font-weight: 700; font-size: 16px; color: var(--accent); letter-spacing: .5px; }
+header .logo { font-weight: 700; font-size: 16px; color: var(--accent); letter-spacing: .5px; display: inline-flex; align-items: center; gap: 6px; }
+header .logo-icon { width: 22px; height: 22px; object-fit: contain; vertical-align: middle; }
 header .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--border); padding: 2px 6px; border-radius: 6px; }
 header .spacer { flex: 1; }
 header .stat { font-size: 12px; color: var(--muted); }
@@ -67,6 +84,19 @@ main {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 10px 12px;
+}
+.config-head {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%;
+  cursor: pointer; user-select: none;
+  font-size: 14px; font-weight: 600; color: var(--text);
+  padding-bottom: 2px;
+}
+.config-head .chev { font-size: 12px; color: var(--muted); transition: transform .15s ease; }
+.config-bar.collapsed .config-head .chev { transform: rotate(-90deg); }
+.config-bar.collapsed .config-fields { display: none; }
+.config-fields {
+  display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; width: 100%;
 }
 .field { display: flex; flex-direction: column; gap: 3px; }
 .field label { font-size: 11px; color: var(--muted); }
@@ -194,27 +224,96 @@ main {
 .modal .field input { width: 100%; min-width: 0; }
 .modal .row { display: flex; gap: 8px; justify-content: flex-end; margin-top: 6px; }
 
-/* 移动端适配 */
-@media (max-width: 640px) {
-  body { font-size: 13px; }
-  header { padding: 8px 10px; gap: 8px; }
+/* 移动端适配: 允许上下滚动, 不强求一屏; 输入框/房间配置更紧凑 */
+@media (max-width: 768px) {
+  body {
+    height: auto;
+    min-height: 100vh;
+    overflow: auto;
+    font-size: 13px;
+  }
+  header {
+    padding: 8px 10px; gap: 8px;
+    position: sticky; top: 0; z-index: 20;
+  }
   header .logo { font-size: 14px; }
-  main { padding: 8px; gap: 8px; }
-  .config-bar { padding: 8px; gap: 6px; }
-  .field select, .field input { min-width: 70px; font-size: 12px; padding: 5px 6px; }
-  .field input.room-input { min-width: 90px; }
-  .btn { padding: 7px 10px; font-size: 12px; }
-  #terminal { font-size: 12px; }
-  .send-bar { flex-direction: column; }
-  .send-bar .actions { flex-direction: row; }
-  .send-bar .actions .btn { flex: 1; }
+  header .tag { display: none; }
+  header .stat { font-size: 11px; }
+  main { padding: 8px; gap: 10px; overflow: visible; }
+
+  /* 房间配置可折叠: 手机上默认收起, 只留一行摘要, 点击展开 */
+  .config-bar { flex-direction: column; align-items: stretch; gap: 8px; padding: 8px; }
+  .config-head {
+    display: flex; align-items: center; gap: 8px;
+    cursor: pointer; user-select: none;
+    font-size: 13px; font-weight: 600; color: var(--text);
+  }
+  .config-head .chev { transition: transform .15s ease; font-size: 11px; color: var(--muted); }
+  .config-bar.collapsed .config-head .chev { transform: rotate(-90deg); }
+  .config-bar.collapsed .config-fields { display: none; }
+  .config-fields { display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-end; }
+  .field, .config-fields .field { flex: 1 1 auto; min-width: 0; }
+  .field label { font-size: 11px; }
+  .field select, .field input { min-width: 0; width: 100%; font-size: 13px; padding: 8px 6px; }
+  .field input.room-input { min-width: 0; }
+  .field .btn, .cfg-edit .btn { width: 100%; padding: 9px 10px; font-size: 13px; }
+
+  /* 共享端: 房间码/密码/开始共享 一行内紧凑排列 */
+  .config-fields .field.room-field,
+  .config-fields .field.pwd-field { flex: 1 1 40%; }
+  .config-fields .field.action-field { flex: 1 1 100%; }
+
+  /* 串口参数编辑区换行 */
+  .cfg-edit { gap: 6px; }
+  .cfg-edit .cfg-item { flex: 1 1 30%; }
+  .cfg-item select { width: 100%; min-width: 0; }
+
+  /* 配置栏内按钮(选择COM/打开串口)一行排 */
+  .config-fields .field.btn-field { flex: 1 1 45%; }
+
+  /* 终端区给足最小高度, 手机上不至于太矮 */
+  .terminal-wrap { min-height: 320px; flex: 1 1 auto; }
+  #terminal { font-size: 12px; min-height: 280px; }
+
+  /* 发送栏: 输入框更高, 按钮一行 */
+  .send-bar { flex-direction: column; gap: 8px; }
+  .send-bar textarea { min-height: 56px; font-size: 14px; }
+  .send-bar .actions { flex-direction: row; flex-wrap: wrap; }
+  .send-bar .actions .btn { flex: 1 1 auto; padding: 10px; font-size: 13px; }
+
+  /* 快速发送面板 */
+  .qs-bar { gap: 6px; flex-wrap: nowrap; }
+  .qs-bar .btn { flex: 1 1 0; padding: 6px 4px; font-size: 12px; white-space: nowrap; }
+
+  /* 窄屏: 列表项只显示 勾选框 + 名称 + 延迟 + 三个操作按钮(一行), 数据/标签移入 title 悬浮查看 */
+  .qs-item { flex-wrap: wrap; align-items: center; gap: 6px; padding: 8px 6px; }
+  .qs-item .qs-data,
+  .qs-item .qs-tag { display: none; }
+  .qs-item .qs-name { flex: 1 1 auto; min-width: 60px; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .qs-item .qs-delay-wrap { order: 3; }
+  .qs-actions { display: flex; flex-direction: row; flex-wrap: nowrap; gap: 6px; flex: 1 1 100%; order: 4; }
+  .qs-actions .icon-btn { flex: 1 1 0; padding: 8px 4px; font-size: 12px; white-space: nowrap; }
+
+  /* 控制行: 移动端全选一行, 顺序/轮询/停止/空闲一行 */
+  .qs-controls { flex-direction: column; gap: 8px; }
+  .qs-ctl-row { display: flex; flex-direction: row; flex-wrap: nowrap; align-items: center; gap: 8px; }
+  .qs-ctl-row .btn { flex: 1 1 0; white-space: nowrap; }
+  .qs-ctl-row .qs-run-state { flex: 1 1 auto; text-align: right; }
+}
+
+/* 极窄屏 (<= 420px) 进一步收紧 */
+@media (max-width: 420px) {
+  .field, .config-fields .field { flex: 1 1 100%; }
+  .config-fields .field.room-field,
+  .config-fields .field.pwd-field { flex: 1 1 45%; }
+  header .stat { font-size: 10px; }
 }
 
 /* ---------- 隐藏类 (模态框 / file input 隐藏依赖此规则) ---------- */
 .hidden { display: none !important; }
 
 /* ---------- 快速发送 (Quick Send) ---------- */
-.qs-panel { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 14px; }
+.qs-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 14px; margin-bottom: 14px; }
 .qs-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .qs-bar .grow { flex: 1; }
 .qs-summary { font-size: 12px; color: var(--muted); margin: 8px 0; }
@@ -223,6 +322,7 @@ main {
 .qs-toggle, #qsToggle { cursor: pointer; }
 .qs-list { display: flex; flex-direction: column; gap: 8px; margin-top: 6px; max-height: 260px; overflow-y: auto; padding-right: 2px; }
 .qs-item { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; background: var(--bg); border: 1px solid var(--border); border-radius: 10px; padding: 8px; }
+.qs-actions { display: inline-flex; gap: 6px; align-items: center; }
 .qs-item .qs-check { width: 16px; height: 16px; cursor: pointer; accent-color: var(--teal, #2dd4bf); }
 .qs-item .qs-name { flex: 0 0 120px; font-weight: 600; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qs-item .qs-data { flex: 1; min-width: 80px; font-family: var(--mono); font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -241,6 +341,7 @@ main {
 .qs-item.dragging { opacity: .4; }
 .qs-item.drop-before { border-top: 2px solid var(--accent); }
 .qs-controls { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+.qs-ctl-row { display: flex; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 10px; }
 .qs-controls label { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 4px; }
 .qs-controls input[type=number] { width: 72px; }
 .qs-run-state { font-size: 12px; margin-left: 8px; }
@@ -250,7 +351,7 @@ main {
 
 /* ---------- 模态框 (Modal, 用于添加/编辑快速发送) ---------- */
 .modal-mask { position: fixed; inset: 0; background: rgba(0,0,0,.55); display: flex; align-items: center; justify-content: center; z-index: 100; padding: 16px; }
-.modal { background: var(--card); border: 1px solid var(--border); border-radius: 14px; padding: 18px; width: min(560px, 100%); max-height: 88vh; overflow: auto; }
+.modal { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px; width: min(560px, 100%); max-height: 88vh; overflow: auto; }
 .modal h3 { margin: 0 0 12px; }
 .modal .row { display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
 .modal .row label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 140px; }

@@ -4,11 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>LinkCOM · 共享端 (串口转发)</title>
+  <link rel="icon" type="image/png" href="logo.png">
   <link rel="stylesheet" href="style.css">
+  <script>
+    (function () {
+      try {
+        var t = localStorage.getItem('linkcom-theme');
+        if (!t) t = (window.matchMedia && window.matchMedia('(prefers-color-scheme: light)').matches) ? 'light' : 'dark';
+        document.documentElement.setAttribute('data-theme', t);
+      } catch (e) { document.documentElement.setAttribute('data-theme', 'dark'); }
+    })();
+  </script>
 </head>
 <body>
   <header>
-    <span class="logo">LinkCOM</span>
+    <span class="logo"><img class="logo-icon" src="logo.png" alt="Logo">LinkCOM</span>
     <span class="tag">共享端 SHARE</span>
     <span class="spacer"></span>
     <span class="stat"><span id="wsDot" class="status-dot"></span><span id="wsStat">未连接服务器</span></span>
@@ -20,46 +30,52 @@
   </header>
 
   <main>
-    <div class="config-bar">
-      <div class="field">
-        <label>串口</label>
-        <button class="btn" id="btnPick">选择 COM 口</button>
+    <div class="config-bar" id="configBar">
+      <div class="config-head" id="configHead">
+        <span class="chev">▾</span><span>房间配置</span>
+        <span class="hint" id="configSummary" style="font-weight:400;margin-left:auto"></span>
       </div>
-      <div class="field">
-        <label>&nbsp;</label>
-        <button class="btn teal" id="btnOpen">打开串口</button>
-      </div>
-      <div class="field">
-        <label>波特率</label>
-        <select id="baud"></select>
-      </div>
-      <div class="field">
-        <label>数据位</label>
-        <select id="dbits"></select>
-      </div>
-      <div class="field">
-        <label>停止位</label>
-        <select id="sbits"></select>
-      </div>
-      <div class="field">
-        <label>校验位</label>
-        <select id="parity"></select>
-      </div>
-      <div class="field">
-        <label>流控</label>
-        <select id="flow"></select>
-      </div>
-      <div class="field">
-        <label>房间码 (共享ID)</label>
-        <input class="room-input" id="room" placeholder="留空自动生成" maxlength="16">
-      </div>
-      <div class="field">
-        <label>密码 (可选)</label>
-        <input id="pwd" placeholder="留空则无密码" maxlength="32" type="password">
-      </div>
-      <div class="field">
-        <label>&nbsp;</label>
-        <button class="btn teal" id="btnShare">开始共享</button>
+      <div class="config-fields">
+        <div class="field btn-field">
+          <label>串口</label>
+          <button class="btn" id="btnPick">选择 COM 口</button>
+        </div>
+        <div class="field btn-field">
+          <label>&nbsp;</label>
+          <button class="btn teal" id="btnOpen">打开串口</button>
+        </div>
+        <div class="field">
+          <label>波特率</label>
+          <select id="baud"></select>
+        </div>
+        <div class="field">
+          <label>数据位</label>
+          <select id="dbits"></select>
+        </div>
+        <div class="field">
+          <label>停止位</label>
+          <select id="sbits"></select>
+        </div>
+        <div class="field">
+          <label>校验位</label>
+          <select id="parity"></select>
+        </div>
+        <div class="field">
+          <label>流控</label>
+          <select id="flow"></select>
+        </div>
+        <div class="field room-field">
+          <label>房间码 (共享ID)</label>
+          <input class="room-input" id="room" placeholder="留空自动生成" maxlength="16">
+        </div>
+        <div class="field pwd-field">
+          <label>密码 (可选)</label>
+          <input id="pwd" placeholder="留空则无密码" maxlength="32" type="password">
+        </div>
+        <div class="field action-field">
+          <label>&nbsp;</label>
+          <button class="btn teal" id="btnShare">开始共享</button>
+        </div>
       </div>
     </div>
 
@@ -105,11 +121,15 @@
       </div>
       <div id="qsList" class="qs-list"></div>
       <div class="qs-controls">
-        <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="qsCheckAll" checked> 全选(仅发送勾选项)</label>
-        <button id="qsSeqBtn" class="btn sm">顺序发送</button>
-        <button id="qsPollBtn" class="btn sm">轮询发送</button>
-        <button id="qsStopBtn" class="btn sm danger">停止</button>
-        <span id="qsRunState" class="qs-run-state stop">空闲</span>
+        <div class="qs-ctl-row">
+          <label style="flex-direction:row;align-items:center;gap:6px"><input type="checkbox" id="qsCheckAll" checked> 全选(仅发送勾选项)</label>
+        </div>
+        <div class="qs-ctl-row">
+          <button id="qsSeqBtn" class="btn sm">顺序发送</button>
+          <button id="qsPollBtn" class="btn sm">轮询发送</button>
+          <button id="qsStopBtn" class="btn sm danger">停止</button>
+          <span id="qsRunState" class="qs-run-state stop">空闲</span>
+        </div>
         <input id="qsImportFile" type="file" accept="application/json,.json" class="hidden">
       </div>
     </section>
@@ -145,5 +165,6 @@
   <script src="serial-config.js"></script>
   <script src="quick.js"></script>
   <script src="share.js"></script>
+  <script src="theme.js"></script>
 </body>
 </html>

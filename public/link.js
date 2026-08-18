@@ -130,7 +130,7 @@
       encoding: $('cfgEnc').value,
     };
     ws.send(JSON.stringify({ t: 'serial-config', cfg }));
-    $('cfgHint').textContent = '已发送配置到共享端, 等待其应用…';
+    $('cfgHint').textContent = '已发送配置到共享端';
     appendSys(`已请求修改串口参数: ${cfg.baudRate}/${cfg.dataBits}/${cfg.stopBits}/${cfg.parity}/${cfg.flowControl}/${cfg.encoding.toUpperCase()}`, 'sys');
   }
 
@@ -288,6 +288,29 @@
   $('btnExportHistory').onclick = exportHistory;
   $('btnApplyCfg').onclick = sendCfgToShare;
 
+  // 房间配置面板折叠/展开 (移动端空间优化)
+  (function () {
+    const bar = $('configBar');
+    const head = $('configHead');
+    const sum = $('configSummary');
+    if (!bar || !head) return;
+    function updateSummary() {
+      const r = ($('room').value || '').trim();
+      sum.textContent = r ? '房间 ' + r : '未设置房间';
+    }
+    head.addEventListener('click', () => {
+      bar.classList.toggle('collapsed');
+      head.querySelector('.chev').textContent = bar.classList.contains('collapsed') ? '▸' : '▾';
+    });
+    // 窄屏默认收起
+    if (window.innerWidth <= 768) {
+      bar.classList.add('collapsed');
+      head.querySelector('.chev').textContent = '▸';
+    }
+    $('room').addEventListener('input', updateSummary);
+    updateSummary();
+  })();
+
   setHint('输入共享端提供的房间码与密码(若有), 点击连接即可远程调试串口。');
   setSendEnabled(false);
 
@@ -296,6 +319,8 @@
   const qRoom = qp.get('room'), qPwd = qp.get('pwd');
   if (qRoom) $('room').value = qRoom;
   if (qPwd) $('pwd').value = qPwd;
+  // 同步折叠头摘要
+  const _sum = $('configSummary'); if (_sum) _sum.textContent = '房间 ' + (qRoom || '');
   connectWs();
   if (qRoom) {
     setHint('正在连接共享房间 ' + qRoom + ' …');

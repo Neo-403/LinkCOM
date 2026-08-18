@@ -445,6 +445,30 @@
     });
   })();
 
+  // 房间配置面板折叠/展开 (移动端空间优化)
+  (function () {
+    const bar = $('configBar');
+    const head = $('configHead');
+    const sum = $('configSummary');
+    if (!bar || !head) return;
+    function updateSummary() {
+      const r = ($('room').value || '').trim();
+      const port = ($('selPort') && $('selPort').value) || '';
+      sum.textContent = (r ? '房间 ' + r : '未设置房间') + (port ? ' · ' + port : '');
+    }
+    head.addEventListener('click', () => {
+      bar.classList.toggle('collapsed');
+      head.querySelector('.chev').textContent = bar.classList.contains('collapsed') ? '▸' : '▾';
+    });
+    // 窄屏默认收起
+    if (window.innerWidth <= 768) {
+      bar.classList.add('collapsed');
+      head.querySelector('.chev').textContent = '▸';
+    }
+    $('room').addEventListener('input', updateSummary);
+    updateSummary();
+  })();
+
   $('btnShare').onclick = startShare;
   $('btnSend').onclick = doSend;
   $('sendText').addEventListener('keydown', (e) => {
@@ -464,6 +488,8 @@
 
   // 房间码默认随机
   $('room').value = 'R' + Math.random().toString(36).slice(2, 6).toUpperCase();
+  // 同步折叠头摘要
+  const _sum = $('configSummary'); if (_sum) { const _p = ($('selPort') && $('selPort').value) || ''; _sum.textContent = '房间 ' + $('room').value + (_p ? ' · ' + _p : ''); }
 
   if (!serialSupported()) {
     setHint('当前浏览器不支持 Web Serial API。请用桌面版 Chrome / Edge, 并通过 http(s) 访问。', true);

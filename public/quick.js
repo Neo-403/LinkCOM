@@ -229,14 +229,19 @@
       const edit = mkBtn('编辑', 'icon-btn', () => this.openEditor(it.id));
       const del = mkBtn('删', 'icon-btn danger', () => this.remove(it.id));
 
+      // 三个操作按钮包进 .qs-actions, 便于移动端整体布局(flex/上下排)
+      const actions = document.createElement('span');
+      actions.className = 'qs-actions';
+      actions.appendChild(send);
+      actions.appendChild(edit);
+      actions.appendChild(del);
+
       div.appendChild(chk);
       div.appendChild(name);
       div.appendChild(data);
       div.appendChild(tag);
       div.appendChild(delayWrap);
-      div.appendChild(send);
-      div.appendChild(edit);
-      div.appendChild(del);
+      div.appendChild(actions);
 
       // 拖拽排序
       div.addEventListener('dragstart', () => { this.dragId = it.id; div.classList.add('dragging'); });
