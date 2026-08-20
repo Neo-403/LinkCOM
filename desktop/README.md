@@ -28,7 +28,7 @@ desktop/
     serial_channel.py     串口通道 (pyserial)
     tcp_client_channel.py TCP Client 通道 (指定本地出口 IP/端口)
     tcp_server_channel.py TCP Server 通道 (多客户端合并+广播)
-  config.py                config.json 读写
+  config.py                linkcom.zwzw 读写 (exe/源码同目录)
   net_util.py             本机网卡 IP 枚举
   url_scheme.py           linkcom:// 解析
   codecs_util.py          UTF-8 / GBK 编解码 + HEX 格式化
@@ -122,11 +122,11 @@ Win7 最高仅支持到 Python 3.8，且需对应的 PyInstaller 老版本（如
 
 > 注：现代 Windows（Win10/11）推荐用最新 Python + 最新 PyInstaller 打包即可。
 
-打包后会把 `config.json` 生成在 exe 同目录，方便修改默认服务器/房间。
+打包后配置会自动保存在 **exe 同目录** 的 `linkcom.zwzw` 中（开发时在源码目录），每次运行读取、修改后保存，参数不会丢失。
 
-## 配置项 (config.json)
+## 配置项 (linkcom.zwzw)
 
-首次运行会自动生成 `config.json`，可手动编辑后重启。字段见 `config.json.example`：
+首次运行会自动生成 `linkcom.zwzw`，可手动编辑后重启。字段结构与 `config.json.example` 一致：
 `server` / `basePath` / `room` / `pwd` / `mode` / `serial` / `tcpClient` / `tcpServer` / `display`。
 
 > 注意：修改 WEB 服务器地址后**必须点击「开始共享」重新连接**才会生效。

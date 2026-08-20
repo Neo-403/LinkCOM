@@ -137,21 +137,20 @@ wss.on('connection', (ws) => {
         let room = rooms.get(roomId);
 
         if (role === 'share') {
-          // 共享端: 若已存在且密码不同则拒绝覆盖 (简单策略: 允许接管, 记录密码)
+          // 共享端: 房间已有其他共享端在线 -> 拒绝创建/接管, 提示已占用
+          if (room && room.share && room.share !== ws) {
+            send(ws, { t: 'err', msg: '房间码已被占用, 请更换房间码后重试' });
+            return;
+          }
           if (!room) {
             room = { pwd: msg.pwd || '', share: null, links: new Set(), cfg: null };
             rooms.set(roomId, room);
           } else {
-            // 若已有共享端且密码不匹配, 拒绝
-            if (room.share && room.pwd && room.pwd !== (msg.pwd || '')) {
+            // 房间已存在(共享端已离开或本连接重入): 校验密码后接管
+            if (room.pwd && room.pwd !== (msg.pwd || '')) {
               send(ws, { t: 'err', msg: '房间密码错误' }); return;
             }
             room.pwd = msg.pwd || room.pwd;
-          }
-          // 顶掉旧共享端
-          if (room.share && room.share !== ws) {
-            send(room.share, { t: 'closed', reason: 'replaced' });
-            try { room.share.close(); } catch {}
           }
           room.share = ws;
         } else {
@@ -165,7 +164,8 @@ wss.on('connection', (ws) => {
           }
           room.links.add(ws);
           // 若已有串口参数, 立即推给新加入的链接端 (解决后加入看不到配置的问题)
-          if (room.cfg) send(ws, { t: 'serial-config', cfg: room.cfg.cfg, mode: room.cfg.mode, agg: room.cfg.agg });
+          // from:'share' 是必须的: 链接端据此识别是共享端下发并应用
+          if (room.cfg) send(ws, { t: 'serial-config', cfg: room.cfg.cfg, mode: room.cfg.mode, agg: room.cfg.agg, from: 'share' });
         }
 
         ws.meta = { roomId, role };

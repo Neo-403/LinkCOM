@@ -133,7 +133,7 @@ class MainWindow(QWidget):
         self.bridge.sig_log.connect(self.append_log)
         self.bridge.sig_ws_open.connect(self.on_ws_open)
         self.bridge.sig_join.connect(self.on_joined)
-        self.bridge.sig_error.connect(lambda m: self.append_log('错误: ' + m, True))
+        self.bridge.sig_error.connect(self.on_server_error)
         self.bridge.sig_peers.connect(self.on_peers)
         self.bridge.sig_closed.connect(lambda r: self.append_log('链接端断开: ' + str(r), False))
         self.bridge.sig_data_from_link.connect(self.on_data_from_link)
@@ -1151,6 +1151,13 @@ class MainWindow(QWidget):
         else:
             self.ws_dot.setStyleSheet('color:gray')
             self.ws_stat.setText('服务器断开, 重连中…')
+
+    @Slot(str)
+    def on_server_error(self, m):
+        """服务器返回错误(如房间码已被占用/密码错误): 弹窗提示并写日志"""
+        self.append_log('错误: ' + m, True)
+        if m:
+            QMessageBox.warning(self, '提示', m)
 
     @Slot(str, object)
     def on_joined(self, room, peers):

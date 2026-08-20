@@ -1,0 +1,37 @@
+{
+  "server": "ws://127.0.0.1:18080",
+  "basePath": "",
+  "room": "123",
+  "pwd": "123",
+  "mode": "serial",
+  "serial": {
+    "port": "COM35",
+    "baudRate": 115200,
+    "dataBits": 8,
+    "stopBits": 1.0,
+    "parity": "none",
+    "flowControl": "none",
+    "encoding": "gbk"
+  },
+  "tcpClient": {
+    "localIp": "",
+    "localPort": "",
+    "remoteHost": "",
+    "remotePort": ""
+  },
+  "tcpServer": {
+    "localIp": "",
+    "localPort": ""
+  },
+  "display": {
+    "modeText": true,
+    "modeHex": false,
+    "showTs": true,
+    "flushMs": 80,
+    "maxBufKb": 4,
+    "encoding": "gbk",
+    "autoScroll": true,
+    "paused": false
+  },
+  "quick": []
+}

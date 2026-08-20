@@ -1,8 +1,21 @@
-"""LinkCOM 桌面端 - 配置读写 (config.json)"""
+"""LinkCOM 桌面端 - 配置读写 (linkcom.zwzw, 存于 exe/源码同目录)
+
+打包为 exe 后 __file__ 指向只读的临时目录(_MEIPASS), 不能再写 config.json,
+因此配置统一存到程序所在目录下的 linkcom.zwzw, 保证每次打开参数不丢失。
+"""
 import json
 import os
+import sys
 
-CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'config.json')
+
+def _config_dir():
+    # 打包(exe)时存到 exe 所在目录; 开发时存到源码目录
+    if getattr(sys, 'frozen', False):
+        return os.path.dirname(os.path.abspath(sys.executable))
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+CONFIG_PATH = os.path.join(_config_dir(), 'linkcom.zwzw')
 
 
 def default_config():
@@ -59,5 +72,9 @@ def load_config(path=CONFIG_PATH):
 
 
 def save_config(cfg, path=CONFIG_PATH):
-    with open(path, 'w', encoding='utf-8') as f:
-        json.dump(cfg, f, indent=2, ensure_ascii=False)
+    # 目录只读等异常时静默失败, 不阻塞程序
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            json.dump(cfg, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
