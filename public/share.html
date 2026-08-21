@@ -33,6 +33,7 @@
     <div class="config-bar" id="configBar">
       <div class="config-head" id="configHead">
         <span class="chev">▾</span><span>房间配置</span>
+        <a class="head-download" id="downloadDesktop" href="https://github.com/Neo-403/LinkCOM/releases" target="_blank" rel="noopener">桌面共享端(支持TCPServer/TCPClient)</a>
         <span class="hint" id="configSummary" style="font-weight:400;margin-left:auto"></span>
       </div>
       <div class="config-fields">
@@ -168,8 +169,19 @@
     </div>
   </div>
 
-  <div class="app-credit" id="appCredit">LinkCOM v1.0.0 | by ZWZW</div>
+  <div class="app-credit" id="appCredit"></div>
 
+  <script>
+    // 下载桌面端仅 Windows 可用: 非 Windows 系统隐藏入口
+    (function () {
+      var p = (navigator.userAgentData && navigator.userAgentData.platform) || navigator.platform || '';
+      var isWin = /^win/i.test(p) || /Windows|Win32|Win64|WinNT/i.test(navigator.userAgent || '');
+      if (!isWin) {
+        var el = document.getElementById('downloadDesktop');
+        if (el) el.style.display = 'none';
+      }
+    })();
+  </script>
   <script src="version.js"></script>
   <script src="gbk.js"></script>
   <script src="serial-config.js"></script>
@@ -180,7 +192,7 @@
     (function () {
       var v = window.APP_VERSION || '1.0.0';
       var el = document.getElementById('appCredit');
-      if (el) el.textContent = 'LinkCOM v' + v + ' | by ZWZW';
+      if (el) el.innerHTML = '<a href="https://github.com/Neo-403/LinkCOM" target="_blank" rel="noopener">LinkCOM v' + v + ' | by ZWZW</a>';
     })();
   </script>
 </body>

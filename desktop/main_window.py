@@ -293,7 +293,8 @@ class MainWindow(QWidget):
         # 状态栏
         self.status = QStatusBar()
         self.status.showMessage('就绪')
-        credit = QLabel('LinkCOM v' + _read_version() + ' | by ZWZW')
+        credit = QLabel('<a href="https://github.com/Neo-403/LinkCOM" style="color:#8a98a8; text-decoration:none;">LinkCOM v' + _read_version() + ' | by ZWZW</a>')
+        credit.setOpenExternalLinks(True)  # 点击用默认浏览器打开 GitHub 项目页
         credit.setStyleSheet('color:#8a98a8; padding-right:8px;')
         self.status.addPermanentWidget(credit)
         root.addWidget(self.status)

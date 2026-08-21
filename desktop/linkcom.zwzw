@@ -2,10 +2,10 @@
   "server": "ws://127.0.0.1:18080",
   "basePath": "",
   "room": "123",
-  "pwd": "123",
+  "pwd": "",
   "mode": "serial",
   "serial": {
-    "port": "COM35",
+    "port": "COM19",
     "baudRate": 115200,
     "dataBits": 8,
     "stopBits": 1.0,
