@@ -142,7 +142,24 @@
       </div>
     </section>
 
-    <div class="hint" id="hint"></div>
+    <!-- 快速匹配面板 (独立模块, 可移除) -->
+    <section class="sn-panel collapsed" id="snPanel">
+      <div class="sn-bar">
+        <strong>快速匹配</strong>
+        <span id="snSummary" class="sn-summary">加载中…</span>
+        <span class="grow"></span>
+        <button id="snToggle" class="btn sm ghost">展开</button>
+        <button id="snAddBtn" class="btn sm primary">添加</button>
+        <button id="snClearBtn" class="btn sm danger">清空</button>
+        <button id="snImportBtn" class="btn sm">导入</button>
+        <button id="snExportBtn" class="btn sm">导出</button>
+      </div>
+      <div class="sn-body">
+        <div id="snRules" class="sn-rules"></div>
+      </div>
+      <input id="snImportFile" type="file" accept="application/json,.json" class="hidden">
+    </section>
+
   </main>
 
   <!-- 快速发送 编辑/添加 模态框 -->
@@ -171,6 +188,9 @@
 
   <div class="app-credit" id="appCredit"></div>
 
+  <div class="toast hidden" id="hint"><span class="toast-text"></span><button class="toast-close" id="hintClose" title="关闭">×</button></div>
+
+
   <script>
     // 下载桌面端仅 Windows 可用: 非 Windows 系统隐藏入口
     (function () {
@@ -186,6 +206,7 @@
   <script src="gbk.js"></script>
   <script src="serial-config.js"></script>
   <script src="quick.js"></script>
+  <script src="sniffer.js"></script>
   <script src="share.js"></script>
   <script src="theme.js"></script>
   <script>

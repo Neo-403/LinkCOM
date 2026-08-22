@@ -42,8 +42,8 @@
         this.items = local.items;
       }
       this.render();
-      // 默认折叠面板, 避免占据过多空间影响其它功能
-      if (this.el.panel) this.el.panel.classList.add('collapsed');
+      // 默认展开面板, 方便首次使用直接看到快速发送列表
+      if (this.el.panel) this.el.panel.classList.remove('collapsed');
     }
 
     cacheEls() {
@@ -84,6 +84,12 @@
       this.el.impBtn && this.el.impBtn.addEventListener('click', () => this.el.impFile && this.el.impFile.click());
       this.el.impFile && this.el.impFile.addEventListener('change', (e) => this.importJson(e));
       this.el.toggleBtn && this.el.toggleBtn.addEventListener('click', () => this.toggle());
+      // 点击标题栏空白处(非按钮)也可切换整个面板展开/收起
+      const qsBar = this.el.panel.querySelector('.qs-bar');
+      qsBar && qsBar.addEventListener('click', (e) => {
+        if (e.target.closest('button')) return; // 按钮各自处理, 避免误触/双触发
+        this.toggle();
+      });
       this.el.checkAll && this.el.checkAll.addEventListener('change', () => this.setAllChecked(this.el.checkAll.checked));
       // 模态框
       this.el.save && this.el.save.addEventListener('click', () => this.saveEditor());
@@ -225,9 +231,9 @@
       delayWrap.appendChild(delay);
       delayWrap.appendChild(document.createTextNode('ms'));
 
-      const send = mkBtn('发送', 'icon-btn primary', () => this.sendOne(it));
-      const edit = mkBtn('编辑', 'icon-btn', () => this.openEditor(it.id));
-      const del = mkBtn('删', 'icon-btn danger', () => this.remove(it.id));
+      const send = mkBtn('发送', 'btn primary', () => this.sendOne(it));
+      const edit = mkBtn('编辑', 'btn', () => this.openEditor(it.id));
+      const del = mkBtn('删除', 'btn danger', () => this.remove(it.id));
 
       // 三个操作按钮包进 .qs-actions, 便于移动端整体布局(flex/上下排)
       const actions = document.createElement('span');

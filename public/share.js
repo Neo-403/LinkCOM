@@ -29,6 +29,35 @@
     } catch (e) {}
   }
   loadAggCfg();
+
+  // 界面配置(显示/发送选项), 持久化到 localStorage, 进入页面自动恢复
+  let autoScroll = true;
+  const UI_KEY = 'linkcom_ui_share';
+  function loadUiCfg() {
+    try {
+      const s = JSON.parse(localStorage.getItem(UI_KEY) || '{}');
+      if (typeof s.enc === 'string') enc = s.enc;
+      if (typeof s.modeText === 'boolean') $('modeText').checked = s.modeText;
+      if (typeof s.modeHex === 'boolean') $('modeHex').checked = s.modeHex;
+      if (typeof s.modeTs === 'boolean') $('modeTs').checked = s.modeTs;
+      if (typeof s.autoScroll === 'boolean') { autoScroll = s.autoScroll; $('autoScroll').checked = autoScroll; }
+      if (typeof s.sendHex === 'boolean') $('sendHex').checked = s.sendHex;
+      if (typeof s.sendCRLF === 'boolean') $('sendCRLF').checked = s.sendCRLF;
+    } catch (e) {}
+  }
+  function saveUiCfg() {
+    try {
+      localStorage.setItem(UI_KEY, JSON.stringify({
+        enc,
+        modeText: $('modeText').checked,
+        modeHex: $('modeHex').checked,
+        modeTs: $('modeTs').checked,
+        autoScroll,
+        sendHex: $('sendHex').checked,
+        sendCRLF: $('sendCRLF').checked,
+      }));
+    } catch (e) {}
+  }
   let enc = 'utf8';                  // utf8 | gbk
   const history = [];                // { ts, cls, buf:Uint8Array }
   const MAX_HISTORY = 5000;
@@ -37,6 +66,8 @@
   const $ = (id) => document.getElementById(id);
   const term = $('terminal');
   const hint = $('hint');
+  const hintClose = $('hintClose');
+  if (hintClose) hintClose.onclick = () => hint.classList.add('hidden');
   const wsDot = $('wsDot'), wsStat = $('wsStat');
   const roomStat = $('roomStat'), peerStat = $('peerStat');
   const rxStat = $('rxStat'), txStat = $('txStat');
@@ -55,7 +86,24 @@
     const d = new Date(); const p = (n) => String(n).padStart(2, '0');
     return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}.${String(d.getMilliseconds()).padStart(3, '0')}`;
   }
-  function setHint(msg, isErr) { hint.textContent = msg || ''; hint.className = 'hint' + (isErr ? ' err' : ''); }
+  let hintTimer = null;
+  function setHint(msg, isErr) {
+    if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
+    if (msg) {
+      let t = hint.querySelector('.toast-text');
+      if (!t) { t = document.createElement('span'); t.className = 'toast-text'; hint.appendChild(t); }
+      t.textContent = msg;
+      hint.classList.toggle('err', !!isErr);
+      hint.classList.remove('hidden');
+      // 非报错信息 1s 后自动关闭; 报错信息保持弹窗, 手动关闭
+      if (!isErr) {
+        const snap = msg;
+        hintTimer = setTimeout(() => { if (t.textContent === snap) hint.classList.add('hidden'); }, 1000);
+      }
+    } else {
+      hint.classList.add('hidden');
+    }
+  }
   function fmtBytes(n) {
     if (n < 1024) return n + ' B';
     if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
@@ -77,6 +125,30 @@
       parts.push(Array.from(slice).map((b) => b.toString(16).padStart(2, '0').toUpperCase()).join(' '));
     }
     return parts.join('\n');
+  }
+  // 整段不分行 HEX(界面显示用): 放不下时由 CSS 自然换行, 不强制 16 字节断行
+  function hexLine(buf) {
+    return Array.from(buf).map((b) => b.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+  }
+  // 文本片段(界面显示用): 保留消息内换行, 并在原始换行处追加灰色 ↩︎ 标记
+  function textFrag(buf) {
+    const frag = document.createDocumentFragment();
+    let s = ''; const str = decodeText(buf);
+    for (const ch of str) {
+      const c = ch.charCodeAt(0);
+      if (c === 0x0d || c === 0x0a || (c >= 0x20 && c < 0x7f) || c > 0x7f) s += ch; else s += '.';
+    }
+    const lines = s.split(/\r\n|\r|\n/);
+    lines.forEach((ln, i) => {
+      frag.appendChild(document.createTextNode(ln));
+      if (i < lines.length - 1) {
+        // ↩︎ 放在前一行末尾, 之后才换行
+        const e = document.createElement('span'); e.className = 'eol'; e.textContent = '↩︎';
+        frag.appendChild(e);
+        frag.appendChild(document.createTextNode('\n'));
+      }
+    });
+    return frag;
   }
   function textOf(buf) {
     // 文本模式下保留 \r\n, 其它不可打印用 .
@@ -104,15 +176,16 @@
     const dir = document.createElement('span'); dir.className = 'dir'; dir.textContent = dirLabel(item.cls);
     wrap.appendChild(dir);
     if (wantText && wantHex) {
-      const t = document.createElement('span'); t.className = 'pane-text'; t.textContent = textOf(item.buf);
-      const h = document.createElement('span'); h.className = 'pane-hex hex'; h.textContent = hexLines(item.buf);
+      const t = document.createElement('span'); t.className = 'pane-text'; t.appendChild(textFrag(item.buf));
+      const h = document.createElement('span'); h.className = 'pane-hex hex'; h.textContent = hexLine(item.buf);
       wrap.appendChild(t); wrap.appendChild(h);
     } else if (wantHex) {
-      const h = document.createElement('span'); h.className = 'hex'; h.textContent = hexLines(item.buf);
+      const h = document.createElement('span'); h.className = 'hex'; h.textContent = hexLine(item.buf);
       wrap.appendChild(h);
     } else {
-      // 文本模式：回车换行折叠为空格，保证单行紧凑显示，复制格式与链接端一致
-      wrap.appendChild(document.createTextNode(textOf(item.buf).replace(/\r\n?/g, ' ')));
+      // 文本模式：保留消息内换行, 行尾灰色 ↩︎ 标记区分"真实换行"与"放不下换行"
+      const t = document.createElement('span'); t.className = 'line-text'; t.appendChild(textFrag(item.buf));
+      wrap.appendChild(t);
     }
     return wrap;
   }
@@ -125,10 +198,11 @@
   }
   function appendData(buf, cls) {
     if (paused) { pushHistory(buf, cls); return; }
+    if (window.sniffer) window.sniffer.feed(buf, cls);  // 快速匹配旁路监听
     const wantText = $('modeText').checked, wantHex = $('modeHex').checked;
     const el = buildLineEl({ ts: nowTs(), cls, buf }, wantText, wantHex);
     term.appendChild(el);
-    if ($('autoScroll').checked) term.scrollTop = term.scrollHeight;
+    if (autoScroll) term.scrollTop = term.scrollHeight;
     // 限制 DOM 行数
     while (term.childElementCount > MAX_HISTORY) term.removeChild(term.firstChild);
   }
@@ -275,7 +349,6 @@
       let name = '已选串口 ✓';
       if (info.usbVendorId) name = `USB#${info.usbVendorId.toString(16)}:${info.usbProductId ? info.usbProductId.toString(16) : '??'} ✓`;
       $('btnPick').textContent = name;
-      setHint('已选择串口 (浏览器出于安全不暴露 COM 口号, 以 USB 标识显示)。');
     } catch (e) { setHint('选择串口失败: ' + e.message, true); }
   }
   async function openPort() {
@@ -298,8 +371,8 @@
       $('btnOpen').textContent = '关闭串口';
       $('btnOpen').classList.remove('teal');
       appendSys(`串口已打开 ${$('baud').value} ${$('dbits').value}${$('parity').value[0].toUpperCase()}${$('sbits').value}`);
-      // 已共享则通知参数变更
-      if (joined && wsOpen) sendFullCfg();
+      // 已共享则通知参数变更 + 串口状态
+      if (joined && wsOpen) { sendFullCfg(); sendSerialState(); }
     } catch (e) { setHint('打开串口失败: ' + e.message, true); }
   }
   async function closePort() {
@@ -311,6 +384,7 @@
     $('btnOpen').textContent = '打开串口';
     $('btnOpen').classList.add('teal');
     appendSys('串口已关闭');
+    if (joined && wsOpen) sendSerialState();
   }
   function serialCfg() {
     return { baudRate: $('baud').value, dataBits: $('dbits').value, stopBits: $('sbits').value,
@@ -320,12 +394,16 @@
   function aggCfg() {
     return { flushMs: FLUSH_MS, maxBufKb: Math.round(MAX_BUF / 1024) };
   }
-  // 完整配置: 含 mode(共享端通道类型) + 串口参数 + 聚合参数
+  // 完整配置: 含 mode(共享端通道类型) + 串口参数 + 聚合参数 + 串口是否已打开
   function fullCfg() {
-    return { cfg: serialCfg(), mode: 'serial', agg: aggCfg() };
+    return { cfg: serialCfg(), mode: 'serial', agg: aggCfg(), portOpen: !!portOpen };
   }
   function sendFullCfg() {
     if (joined && wsOpen) ws.send(JSON.stringify(Object.assign({ t: 'serial-config' }, fullCfg())));
+  }
+  // 实时同步本地串口打开/关闭状态给链接端, 使其无法在串口未打开时发送
+  function sendSerialState() {
+    if (joined && wsOpen) ws.send(JSON.stringify({ t: 'serial-state', portOpen: !!portOpen }));
   }
   function concatBytes(a, b) {
     const c = new Uint8Array(a.length + b.length);
@@ -479,10 +557,12 @@
   $('btnOpen').onclick = () => { if (portOpen) closePort(); else openPort(); };
   // 统一渲染串口参数下拉（共享端与链接端共用 serial-config.js，确保一致性）
   if (window.SERIAL_UI) {
-    SERIAL_UI.fillShare();
-    SERIAL_UI.fillEncoding();
-    enc = SERIAL_UI.DEFAULTS.encoding;
+  SERIAL_UI.fillShare();
+  SERIAL_UI.fillEncoding();
+  enc = SERIAL_UI.DEFAULTS.encoding;
   }
+  // 恢复界面配置(显示/发送选项), 需在渲染与编码初始化之前
+  loadUiCfg();
 
   // 右上「切换到链接端」：新开标签页打开 link.html, 并带上当前房间码/密码, 方便直接连接同一房间 (保留本页)
   (function () {
@@ -550,15 +630,22 @@
     updateSummary();
   })();
 
+  // 快速匹配模块 (独立, 可移除)
+  window.sniffer = new Sniffer({ storageKey: 'linkcom_sniffer_share', hint: setHint });
+  sniffer.init();
+
   $('btnShare').onclick = startShare;
   $('btnSend').onclick = doSend;
   $('sendText').addEventListener('keydown', (e) => {
     if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); }
   });
-  $('modeText').onchange = rerender;
-  $('modeHex').onchange = rerender;
-  $('modeTs').onchange = rerender;
-  $('encoding').onchange = () => { enc = $('encoding').value; rerender(); if (joined && wsOpen) sendFullCfg(); };
+  $('modeText').onchange = () => { rerender(); saveUiCfg(); };
+  $('modeHex').onchange = () => { rerender(); saveUiCfg(); };
+  $('modeTs').onchange = () => { rerender(); saveUiCfg(); };
+  $('encoding').onchange = () => { enc = $('encoding').value; rerender(); saveUiCfg(); if (joined && wsOpen) sendFullCfg(); };
+  $('autoScroll').onchange = () => { autoScroll = $('autoScroll').checked; saveUiCfg(); };
+  $('sendHex').onchange = saveUiCfg;
+  $('sendCRLF').onchange = saveUiCfg;
   $('btnPause').onclick = () => { paused = !paused; $('btnPause').textContent = paused ? '继续' : '暂停'; };
   $('btnClear').onclick = () => { history.length = 0; term.innerHTML = ''; };
   $('btnExportHistory').onclick = exportHistory;
@@ -586,10 +673,9 @@
   const _sum = $('configSummary'); if (_sum) { const _p = ($('selPort') && $('selPort').value) || ''; _sum.textContent = '房间 ' + $('room').value + (_p ? ' · ' + _p : ''); }
 
   if (!serialSupported()) {
-    setHint('当前浏览器不支持 Web Serial API。请用桌面版 Chrome / Edge, 并通过 http(s) 访问。', true);
+    // 不支持 Web Serial 的环境(手机 / 非 Chrome·Edge 浏览器)统一以错误弹窗提示
+    setHint('提示: 手机无法使用 Web Serial, 请在本机电脑用 Chrome/Edge 共享。选 COM 口后可先本地调试, 再点开始共享。', true);
     $('btnPick').disabled = true; $('btnOpen').disabled = true;
-  } else {
-    setHint('提示: 手机无法使用 Web Serial, 请在本机电脑用 Chrome/Edge 共享。选 COM 口后可先本地调试, 再点开始共享。');
   }
   connectWs();
 })();

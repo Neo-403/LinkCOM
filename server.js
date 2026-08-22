@@ -92,7 +92,7 @@ function send(ws, obj) {
 }
 
 function roomPeers(room) {
-  return { share: !!room.share, links: room.links.size };
+  return { share: !!room.share, links: room.links.size, sharePortOpen: !!room.sharePortOpen };
 }
 
 function broadcastPeers(roomId) {
@@ -143,7 +143,7 @@ wss.on('connection', (ws) => {
             return;
           }
           if (!room) {
-            room = { pwd: msg.pwd || '', share: null, links: new Set(), cfg: null };
+            room = { pwd: msg.pwd || '', share: null, links: new Set(), cfg: null, sharePortOpen: false };
             rooms.set(roomId, room);
           } else {
             // 房间已存在(共享端已离开或本连接重入): 校验密码后接管
@@ -153,6 +153,7 @@ wss.on('connection', (ws) => {
             room.pwd = msg.pwd || room.pwd;
           }
           room.share = ws;
+          room.sharePortOpen = false; // 共享端重连接管时复位, 待其下发 serial-state 同步
         } else {
           // 链接端
           if (!room) { send(ws, { t: 'err', msg: '房间不存在, 请先由共享端创建' }); return; }
@@ -190,6 +191,17 @@ wss.on('connection', (ws) => {
         break;
       }
 
+      case 'serial-state': {
+        // 共享端串口打开/关闭实时状态: 转发给链接端并缓存(供后加入者同步)
+        const { roomId, role } = ws.meta || {};
+        if (!roomId || role !== 'share') return;
+        const room = rooms.get(roomId);
+        if (!room) return;
+        room.sharePortOpen = !!msg.portOpen;
+        room.links.forEach((l) => send(l, { t: 'serial-state', portOpen: room.sharePortOpen }));
+        break;
+      }
+
       case 'serial-config': {
         const { roomId, role } = ws.meta || {};
         if (!roomId) return;
@@ -198,7 +210,9 @@ wss.on('connection', (ws) => {
         if (role === 'share') {
           // 共享端主动变更: 通知所有链接端并缓存 (含 mode/agg)
           room.cfg = { cfg: msg.cfg, mode: msg.mode, agg: msg.agg };
-          room.links.forEach((l) => send(l, { t: 'serial-config', cfg: msg.cfg, mode: msg.mode, agg: msg.agg, from: 'share' }));
+          // 完整配置可能一并携带最新串口状态
+          if (typeof msg.portOpen === 'boolean') room.sharePortOpen = msg.portOpen;
+          room.links.forEach((l) => send(l, { t: 'serial-config', cfg: msg.cfg, mode: msg.mode, agg: msg.agg, portOpen: room.sharePortOpen, from: 'share' }));
         } else if (role === 'link') {
           // 链接端请求修改参数: 转发给共享端 (由其重设串口/聚合)
           if (room.share) send(room.share, { t: 'serial-config', cfg: msg.cfg, mode: msg.mode, agg: msg.agg, from: 'link' });
