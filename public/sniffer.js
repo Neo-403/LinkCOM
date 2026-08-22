@@ -316,13 +316,10 @@
 
     renderRecords() { this.renderRules(); }
 
-    // 把某规则的记录渲染到指定容器内
-    renderRecordsInto(box, rule, recs) {
-      if (!box) return;
-      box.innerHTML = '';
-      if (!recs.length) { box.innerHTML = '<div class="sn-empty sm">无匹配记录</div>'; return; }
+    // 记录排序(显示与查看帧必须共用, 保证 data-i 与 recordsFor 下标一致)
+    sortRecords(arr, rule) {
       const key = rule.sortKey || 'time', dir = (rule.sortDir == null ? -1 : rule.sortDir);
-      const arr = recs.slice().sort((a, b) => {
+      return arr.slice().sort((a, b) => {
         let c;
         if (key === 'count') c = a.count - b.count;
         else if (key === 'value') {
@@ -331,6 +328,14 @@
         } else c = a.lastTs < b.lastTs ? -1 : a.lastTs > b.lastTs ? 1 : 0;
         return c * dir;
       });
+    }
+
+    // 把某规则的记录渲染到指定容器内
+    renderRecordsInto(box, rule, recs) {
+      if (!box) return;
+      box.innerHTML = '';
+      if (!recs.length) { box.innerHTML = '<div class="sn-empty sm">无匹配记录</div>'; return; }
+      const arr = this.sortRecords(recs, rule);
       const full = (rule.dedupType || (rule.dedup ? 'match' : 'none')) !== 'match';
       for (let i = 0; i < arr.length; i++) {
         const rec = arr[i];
@@ -544,7 +549,7 @@
             const ri = parseInt(btn.getAttribute('data-i'), 10);
             const rule = self.rules.find((x) => x.id === rid);
             if (rule) {
-              const recs = self.recordsFor(rule);
+              const recs = self.sortRecords(self.recordsFor(rule), rule);
               const rec = recs[ri];
               if (rec) self.viewFrames(rule, rec);
             }
