@@ -13,6 +13,22 @@ import re
 ROOT = os.path.dirname(os.path.abspath(__file__))
 VERSION_FILE = os.path.join(ROOT, 'VERSION')
 OUT_FILE = os.path.join(ROOT, 'public', 'version.js')
+PKG_FILE = os.path.join(ROOT, 'package.json')
+
+
+def sync_package_json(v):
+    """同步 package.json 的 version 字段, 使其也由 VERSION 控制。"""
+    import json
+    if not os.path.exists(PKG_FILE):
+        return
+    with open(PKG_FILE, 'r', encoding='utf-8') as f:
+        pkg = json.load(f)
+    if pkg.get('version') != v:
+        pkg['version'] = v
+        with open(PKG_FILE, 'w', encoding='utf-8') as f:
+            json.dump(pkg, f, ensure_ascii=False, indent=2)
+            f.write('\n')
+        print(f'Updated {os.path.relpath(PKG_FILE, ROOT)} version -> {v}')
 
 
 def read_version():
@@ -33,6 +49,7 @@ def main():
     with open(OUT_FILE, 'w', encoding='utf-8') as f:
         f.write(js)
     print(f'Generated {os.path.relpath(OUT_FILE, ROOT)} (APP_VERSION = {v})')
+    sync_package_json(v)
 
 
 if __name__ == '__main__':
