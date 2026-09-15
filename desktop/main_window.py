@@ -4,6 +4,7 @@
 统一: 房间码 + WEB 服务器配置 + 日志终端 + 收发统计 + 富发送区
 协议复用 server.js (WebSocket /ws, role=share)
 """
+import json
 import os
 import sys
 import time
@@ -14,7 +15,7 @@ from PySide6.QtWidgets import (
     QApplication, QWidget, QVBoxLayout, QHBoxLayout, QTabWidget, QGroupBox,
     QLabel, QLineEdit, QPushButton, QComboBox, QCheckBox, QTextEdit, QPlainTextEdit,
     QSpinBox, QStatusBar, QFileDialog, QMessageBox, QFrame, QInputDialog,
-    QListWidget, QListWidgetItem, QDialog,
+    QListWidget, QListWidgetItem, QDialog, QFormLayout,
 )
 from PySide6.QtGui import QTextCursor, QColor, QPalette
 
@@ -23,6 +24,7 @@ from linkcom_client import LinkComClient
 from channels import SerialChannel, TcpClientChannel, TcpServerChannel
 from net_util import list_local_ips
 from codecs_util import decode_text, encode_text, hex_lines, text_of
+from sniffer import Sniffer, hex_to_bytes, new_rule_id
 
 MAX_HISTORY = 5000
 
@@ -128,6 +130,11 @@ class MainWindow(QWidget):
         self.quick_items = cfg.get('quick') or []
         if not isinstance(self.quick_items, list):
             self.quick_items = []
+        # 快速匹配 (Sniffer): 规则/记录存配置 sniffer 字段, 逻辑与 Web 端 sniffer.js 对齐
+        self.sniffer = Sniffer(lambda: self.encoding)
+        sn_st = cfg.get('sniffer')
+        if isinstance(sn_st, dict):
+            self.sniffer.load_storage(sn_st)
 
         self.bridge = Bridge()
         self.bridge.sig_log.connect(self.append_log)
@@ -289,6 +296,9 @@ class MainWindow(QWidget):
 
         # ===== 快速发送 (与 Web 端 quick.js 功能一致) =====
         self._build_quick_send(root)
+
+        # ===== 快速匹配 (与 Web 端 sniffer.js 功能一致) =====
+        self._build_sniffer(root)
 
         # 状态栏
         self.status = QStatusBar()
@@ -477,6 +487,7 @@ class MainWindow(QWidget):
             'paused': self.paused,
         }
         c['quick'] = self.quick_items
+        c['sniffer'] = self.sniffer.to_storage()
         return c
 
     # ---------------- 连接/通道 控制 ----------------
@@ -555,6 +566,8 @@ class MainWindow(QWidget):
             return
         self.btn_open.setText('关闭通道')
         self.append_log('通道已打开', False)
+        # 通知链接端通道状态, 使其在通道未打开时禁止发送 (serial-state)
+        self._report_serial_state()
 
     def close_channel(self):
         if self.channel:
@@ -562,6 +575,8 @@ class MainWindow(QWidget):
             self.channel = None
         self.btn_open.setText('打开通道')
         self.append_log('通道已关闭', False)
+        # 通知链接端通道状态, 使其在通道未打开时禁止发送 (serial-state)
+        self._report_serial_state()
 
     def _make_channel(self, c):
         mode = c['mode']
@@ -664,6 +679,9 @@ class MainWindow(QWidget):
             self.history.pop(0)
         if self.paused:
             return
+        # 快速匹配旁路监听 (与 Web 端一致: 暂停时不监听)
+        if cls in ('rx', 'tx', 'ltx') and self.sniffer.feed(buf, cls):
+            self._sn_schedule_render()
         self.append_line(ts, cls, buf)
 
     def _color_for(self, cls):
@@ -708,6 +726,8 @@ class MainWindow(QWidget):
     def on_encoding_changed(self, enc):
         self.encoding = enc
         self.rerender()
+        # 编码影响快速匹配的显示解码, 重绘记录
+        self._sn_schedule_render()
 
     def on_agg_changed(self, _=None):
         # 聚合参数实时生效(下次打开串口时应用)
@@ -1105,6 +1125,483 @@ class MainWindow(QWidget):
         except Exception as e:
             self.append_log('导入失败: ' + str(e), True)
 
+    # ---------------- 快速匹配 (对标 Web 端 sniffer.js) ----------------
+    SN_MAX_ROWS = 50        # 每条规则最多展示的记录行数, 超出部分仍可查看帧/导出
+    SN_FRAME_MAX_BYTES = 2048  # 查看帧单帧展示字节上限
+
+    def _build_sniffer(self, root):
+        box = QGroupBox('快速匹配')
+        v = QVBoxLayout(box)
+        v.setContentsMargins(10, 4, 10, 10)
+        v.setSpacing(6)
+        # 标题行 (可点击折叠) + 摘要
+        title_row = QHBoxLayout()
+        self.sn_toggle = QPushButton('展开')
+        self.sn_toggle.setFixedWidth(56)
+        self.sn_summary = QLabel('规则 0/0 · 记录 0')
+        self.sn_summary.setStyleSheet('color:#9aa0a6')
+        title_row.addWidget(self.sn_toggle)
+        title_row.addWidget(self.sn_summary)
+        title_row.addStretch(1)
+        v.addLayout(title_row)
+
+        self.sn_body = QWidget()
+        body = QVBoxLayout(self.sn_body)
+        body.setContentsMargins(0, 0, 0, 0)
+        body.setSpacing(6)
+
+        bar = QHBoxLayout()
+        self.sn_add = QPushButton('添加')
+        self.sn_clear = QPushButton('清空记录')
+        self.sn_imp = QPushButton('导入规则')
+        self.sn_exp = QPushButton('导出规则')
+        for b in (self.sn_add, self.sn_clear, self.sn_imp, self.sn_exp):
+            bar.addWidget(b)
+        bar.addStretch(1)
+        body.addLayout(bar)
+
+        self.sn_list = QListWidget()
+        self.sn_list.setStyleSheet(
+            'QListWidget { background:#15151a; border:1px solid #353541; border-radius:8px; }'
+            'QListWidget::item { padding:1px; }')
+        self.sn_list.setMinimumHeight(140)
+        body.addWidget(self.sn_list, 2)
+
+        v.addWidget(self.sn_body)
+        root.addWidget(box)
+
+        # 信号
+        self.sn_toggle.clicked.connect(self.sn_toggle_collapse)
+        self.sn_add.clicked.connect(lambda: self.sn_open_editor(None))
+        self.sn_clear.clicked.connect(self.sn_clear_records)
+        self.sn_imp.clicked.connect(self.sn_import)
+        self.sn_exp.clicked.connect(self.sn_export)
+        # 数据可能高频到达, 变更后合并 300ms 再重绘
+        self.sn_render_timer = QTimer(self)
+        self.sn_render_timer.setSingleShot(True)
+        self.sn_render_timer.setInterval(300)
+        self.sn_render_timer.timeout.connect(self.sn_render)
+        self._sn_folded = {}     # 规则 id -> 记录区是否折叠
+        self.sn_collapsed = True
+        self.sn_render()
+        self.sn_toggle_collapse()  # 默认收起 (与 Web 端一致)
+
+    def sn_toggle_collapse(self):
+        self.sn_collapsed = not self.sn_collapsed
+        self.sn_body.setVisible(not self.sn_collapsed)
+        self.sn_toggle.setText('展开' if self.sn_collapsed else '收起')
+
+    def _sn_schedule_render(self):
+        if not self.sn_render_timer.isActive():
+            self.sn_render_timer.start()
+
+    def _report_serial_state(self):
+        """通道打开/关闭状态实时同步给链接端 (serial-state), 使其未打开时无法发送"""
+        if self.client is not None and self.client._joined:
+            self.client.send_state(bool(self.channel and self.channel.is_open()))
+
+    def sn_render(self):
+        self.sn_list.clear()
+        en = 0
+        total = 0
+        for r in self.sniffer.rules:
+            recs = self.sniffer.records_for(r)
+            total += len(recs)
+            if r.get('enabled', True):
+                en += 1
+            self._sn_add_rule_row(r, recs)
+        self.sn_summary.setText(f'规则 {en}/{len(self.sniffer.rules)} · 记录 {total}')
+
+    def _sn_rule_meta(self, r):
+        d = {'recv': '仅接收', 'send': '仅发送', 'both': '全部'}.get(r.get('dir'), '仅接收')
+        lv = r.get('lenVal') or 0
+        lf = f" 长{r.get('lenOp') or '='}{lv}" if lv else ''
+        dm = 'HEX' if r.get('dispEnc') == 'hex' else '文本'
+        if r.get('mode') == 'keyword':
+            m = 'HEX' if (r.get('matchEnc') or 'hex') == 'hex' else '文本'
+            return f"{d} | 匹配:{r.get('keyword') or '-'}{lf} | 匹:{m}→显:{dm}"
+        return f"{d} | 偏移:{r.get('startOffset') or 0} 取{r.get('length') or 0}字节{lf} | 显:{dm}"
+
+    def _sn_add_rule_row(self, r, recs):
+        rid = r['id']
+        item = QListWidgetItem(self.sn_list)
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(4, 2, 4, 2)
+        h.setSpacing(6)
+        folded = bool(self._sn_folded.get(rid))
+        b_fold = QPushButton('▸' if folded else '▾')
+        b_fold.setFixedSize(22, 22)
+        b_fold.setStyleSheet('QPushButton { padding:0; }')
+        b_fold.clicked.connect(lambda _, i=rid: self._sn_toggle_fold(i))
+        en = QCheckBox()
+        en.setChecked(bool(r.get('enabled', True)))
+        en.setStyleSheet(_CHECK_STYLE)
+        en.stateChanged.connect(lambda _, i=rid, c=en: self._sn_set_enabled(i, c.isChecked()))
+        badge = QLabel('匹配关键字' if r.get('mode') == 'keyword' else '提取')
+        badge.setStyleSheet('color:#3ddc84' if r.get('enabled', True) else 'color:#5a5a64')
+        name = QLabel(r.get('name') or '未命名规则')
+        name.setStyleSheet('color:#e6e6e6; font-weight:600')
+        name.setMinimumWidth(72)
+        meta = QLabel(self._sn_rule_meta(r))
+        meta.setStyleSheet('color:#9aa0a6')
+        dedup_t = r.get('dedupType') or 'match'
+        cnt_text = str(len(recs))
+        if dedup_t == 'match':
+            cnt_text += ' (匹配去重)'
+        elif dedup_t == 'all':
+            cnt_text += ' (全匹配去重)'
+        cnt = QLabel(cnt_text)
+        cnt.setStyleSheet('color:#ffd666')
+        b_exp = QPushButton('导出'); b_exp.setFixedHeight(28)
+        b_clr = QPushButton('清空'); b_clr.setFixedHeight(28)
+        b_edit = QPushButton('编辑'); b_edit.setFixedHeight(28)
+        b_del = QPushButton('删除'); b_del.setFixedHeight(28)
+        for b in (b_exp, b_clr, b_edit, b_del):
+            b.setMinimumWidth(46)
+        b_exp.clicked.connect(lambda _, i=rid: self.sn_export_rule_records(i))
+        b_clr.clicked.connect(lambda _, i=rid: self.sn_clear_rule_records(i))
+        b_edit.clicked.connect(lambda _, i=rid: self.sn_open_editor(i))
+        b_del.clicked.connect(lambda _, i=rid: self.sn_delete_rule(i))
+        h.addWidget(b_fold)
+        h.addWidget(en)
+        h.addWidget(badge)
+        h.addWidget(name)
+        h.addWidget(meta, 1)
+        h.addWidget(cnt)
+        h.addWidget(b_exp)
+        h.addWidget(b_clr)
+        h.addWidget(b_edit)
+        h.addWidget(b_del)
+        w.setMinimumHeight(34)
+        item.setSizeHint(QSize(w.sizeHint().width(), 34))
+        self.sn_list.setItemWidget(item, w)
+        if not folded:
+            shown = self.sniffer.sort_records(recs, r)[:self.SN_MAX_ROWS]
+            for rec in shown:
+                self._sn_add_record_row(r, rec)
+            if len(recs) > len(shown):
+                self._sn_add_note_row(f'…… 其余 {len(recs) - len(shown)} 条 (查看帧/导出取完整数据)')
+
+    def _sn_add_record_row(self, rule, rec):
+        item = QListWidgetItem(self.sn_list)
+        w = QWidget()
+        h = QHBoxLayout(w)
+        h.setContentsMargins(30, 1, 4, 1)
+        h.setSpacing(6)
+        ts = QLabel(rec.get('lastTs') or rec.get('ts') or '')
+        ts.setStyleSheet('color:#6b7280')
+        val = QLabel(self._sn_rec_value_text(rule, rec))
+        val.setStyleSheet('color:#d4d4d4')
+        b_view = QPushButton('查看帧')
+        b_view.setFixedHeight(28)
+        b_view.clicked.connect(lambda _, ru=rule, rc=rec: self.sn_view_frames(ru, rc))
+        h.addWidget(ts)
+        h.addWidget(val, 1)
+        if rec.get('count', 1) > 1:
+            c = QLabel(f"×{rec['count']}")
+            c.setStyleSheet('color:#ffd666')
+            h.addWidget(c)
+        h.addWidget(b_view)
+        w.setMinimumHeight(34)
+        item.setSizeHint(QSize(w.sizeHint().width(), 34))
+        self.sn_list.setItemWidget(item, w)
+
+    def _sn_add_note_row(self, text):
+        item = QListWidgetItem(self.sn_list)
+        lb = QLabel(text)
+        lb.setStyleSheet('color:#5a5a64; padding-left:30px')
+        item.setSizeHint(QSize(200, 20))
+        self.sn_list.setItemWidget(item, lb)
+
+    def _sn_rec_value_text(self, rule, rec):
+        b = hex_to_bytes(rec.get('rawHex') or '')
+        if not b:
+            return ''
+        full = (rule.get('dedupType') or 'match') != 'match'
+        disp = rule.get('dispEnc') or 'text'
+        if not full:
+            hl = rec.get('hl')
+            if not hl:
+                return ''
+            seg = b[hl[0]:hl[1]]
+            return self.sniffer.display_bytes(seg, disp)
+        # 整帧展示: 截断到 48 字节 (与 Web 端一致)
+        out = self.sniffer.display_bytes(b[:48], disp)
+        return out + ('…' if len(b) > 48 else '')
+
+    def _sn_toggle_fold(self, rid):
+        self._sn_folded[rid] = not self._sn_folded.get(rid, False)
+        self.sn_render()
+
+    def _sn_set_enabled(self, rid, val):
+        r = self.sniffer.find_rule(rid)
+        if r is not None:
+            r['enabled'] = bool(val)
+            self.sn_render()
+
+    def sn_clear_records(self):
+        if not self.sniffer.records:
+            return
+        if QMessageBox.question(
+                self, '快速匹配', '清空全部规则的记录? (规则保留)',
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                ) == QMessageBox.StandardButton.Yes:
+            self.sniffer.clear_records()
+            self.sn_render()
+
+    def sn_clear_rule_records(self, rid):
+        r = self.sniffer.find_rule(rid)
+        if r is None:
+            return
+        if QMessageBox.question(
+                self, '快速匹配', f"清空规则「{r.get('name') or '未命名'}」的记录?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                ) == QMessageBox.StandardButton.Yes:
+            self.sniffer.clear_records(rid)
+            self.sn_render()
+
+    def sn_delete_rule(self, rid):
+        r = self.sniffer.find_rule(rid)
+        if r is None:
+            return
+        if QMessageBox.question(
+                self, '快速匹配', f"删除规则「{r.get('name') or '未命名'}」? (其记录一并删除)",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                ) == QMessageBox.StandardButton.Yes:
+            self.sniffer.remove_rule(rid)
+            self._sn_folded.pop(rid, None)
+            self.sn_render()
+
+    # ---------- 查看帧 ----------
+    def _sn_frame_html(self, rule, rec):
+        """原始帧 HTML: 命中段绿色高亮 (与 Web 端查看帧一致, 不可打印字符以 · 表示)"""
+        disp = rule.get('dispEnc') or 'text'
+        b = hex_to_bytes(rec.get('rawHex') or '') or b''
+        hl = rec.get('hl')
+        s0, s1 = (hl[0], hl[1]) if hl else (-1, -1)
+        n = min(len(b), self.SN_FRAME_MAX_BYTES)
+        parts = []
+        if disp == 'hex':
+            for i in range(n):
+                t = f'{b[i]:02X}'
+                parts.append(f'<span style="color:#3ddc84; font-weight:600;">{t}</span>' if s0 <= i < s1 else t)
+            out = ' '.join(parts)
+        else:
+            for i in range(n):
+                x = b[i]
+                ch = chr(x) if 0x20 <= x < 0x7f else '·'
+                ch = ch.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+                parts.append(f'<span style="color:#3ddc84; font-weight:600;">{ch}</span>' if s0 <= i < s1 else ch)
+            out = ''.join(parts)
+        if len(b) > n:
+            out += ' …'
+        return out
+
+    def sn_view_frames(self, rule, rec):
+        refs = rec.get('_refs') or [rec]
+        disp = rule.get('dispEnc') or 'text'
+        enc_label = 'HEX' if disp == 'hex' else '文本'
+        dlg = QDialog(self)
+        dlg.setWindowTitle(f"帧记录 (共 {len(refs)} 次) · 编码: {enc_label}")
+        dlg.setMinimumSize(560, 420)
+        v = QVBoxLayout(dlg)
+        te = QTextEdit()
+        te.setReadOnly(True)
+        te.setStyleSheet(_TERM_STYLE)
+        f = te.font()
+        f.setFamily('Consolas')
+        te.setFont(f)
+        html = []
+        for i, fr in enumerate(refs):
+            ts = fr.get('ts') or fr.get('lastTs') or ''
+            html.append(
+                f'<div style="margin-bottom:6px;">'
+                f'<span style="color:#6b7280;">[{ts}]</span> '
+                f'<span style="color:#9aa0a6;">#{i + 1}</span> '
+                f'{self._sn_frame_html(rule, fr)}</div>')
+        te.setHtml(''.join(html) or '<span style="color:#9aa0a6;">无数据</span>')
+        v.addWidget(te)
+        hb = QHBoxLayout()
+        hb.addStretch(1)
+        b_close = QPushButton('关闭')
+        b_close.clicked.connect(dlg.accept)
+        hb.addWidget(b_close)
+        v.addLayout(hb)
+        dlg.exec()
+
+    # ---------- 规则编辑器 ----------
+    def sn_open_editor(self, rule_id=None):
+        """整块表单对话框 (新增/编辑规则), 字段与 Web 端 sniffer.js 一致"""
+        cur = self.sniffer.find_rule(rule_id) if rule_id else None
+        dlg = QDialog(self)
+        dlg.setWindowTitle('快速匹配 - ' + ('编辑规则' if cur else '添加规则'))
+        dlg.setMinimumWidth(480)
+        v = QVBoxLayout(dlg)
+        form = QFormLayout()
+        ed_name = QLineEdit((cur or {}).get('name', ''))
+        form.addRow('名称', ed_name)
+        cb_mode = QComboBox()
+        cb_mode.addItems(['提取 (起点偏移 + 长度)', '匹配关键字 (命中即记录)'])
+        cb_mode.setCurrentIndex(1 if (cur or {}).get('mode') == 'keyword' else 0)
+        form.addRow('匹配模式', cb_mode)
+        cb_dir = QComboBox()
+        cb_dir.addItems(['仅接收', '仅发送', '全部'])
+        cb_dir.setCurrentIndex({'recv': 0, 'send': 1, 'both': 2}.get((cur or {}).get('dir'), 0))
+        form.addRow('方向', cb_dir)
+        cb_denc = QComboBox()
+        cb_denc.addItems(['HEX', '文本 (采用"显示数据"编码)'])
+        cb_denc.setCurrentIndex(0 if (cur or {}).get('dispEnc') == 'hex' else 1)
+        form.addRow('显示编码', cb_denc)
+        cb_menc = QComboBox()
+        cb_menc.addItems(['HEX (按十六进制匹配)', '文本 (按"显示数据"处编码匹配)'])
+        cb_menc.setCurrentIndex(0 if (cur or {}).get('matchEnc', 'hex') == 'hex' else 1)
+        form.addRow('匹配编码', cb_menc)
+        ed_kw = QLineEdit((cur or {}).get('keyword', ''))
+        ed_kw.setPlaceholderText('如 9B 01 或 HELLO')
+        form.addRow('匹配关键字', ed_kw)
+        sb_off = QSpinBox()
+        sb_off.setRange(0, 65535)
+        sb_off.setValue(int((cur or {}).get('startOffset') or 0))
+        form.addRow('起点偏移 (字节, 从数据流开头计)', sb_off)
+        sb_len = QSpinBox()
+        sb_len.setRange(1, 4096)
+        sb_len.setValue(int((cur or {}).get('length') or 1))
+        form.addRow('提取长度 (字节)', sb_len)
+        # 数据长度过滤
+        h_len = QHBoxLayout()
+        cb_lenop = QComboBox()
+        cb_lenop.addItems(['>', '>=', '<', '<=', '='])
+        cb_lenop.setCurrentText((cur or {}).get('lenOp') or '=')
+        sb_lenval = QSpinBox()
+        sb_lenval.setRange(0, 65535)
+        sb_lenval.setValue(int((cur or {}).get('lenVal') or 0))
+        sb_lenval.setSpecialValueText('不限')
+        h_len.addWidget(cb_lenop)
+        h_len.addWidget(sb_lenval)
+        h_len.addStretch(1)
+        w_len = QWidget()
+        w_len.setLayout(h_len)
+        form.addRow('数据长度过滤', w_len)
+        cb_dedup = QComboBox()
+        cb_dedup.addItems(['不去重', '匹配去重', '全匹配去重'])
+        cb_dedup.setCurrentIndex({'none': 0, 'match': 1, 'all': 2}.get((cur or {}).get('dedupType'), 1))
+        form.addRow('去重方式', cb_dedup)
+        cb_sort = QComboBox()
+        cb_sort.addItems(['按时间', '按值', '按次数'])
+        cb_sort.setCurrentIndex({'time': 0, 'value': 1, 'count': 2}.get((cur or {}).get('sortKey'), 0))
+        form.addRow('排序', cb_sort)
+        v.addLayout(form)
+        cb_acc = QCheckBox('跨帧累积 (流被拆开时勾选, 偏移更准)')
+        cb_acc.setChecked(bool((cur or {}).get('accumulate', True)))
+        cb_acc.setStyleSheet(_CHECK_STYLE)
+        v.addWidget(cb_acc)
+        cb_en = QCheckBox('启用')
+        cb_en.setChecked(bool((cur or {}).get('enabled', True)))
+        cb_en.setStyleSheet(_CHECK_STYLE)
+        v.addWidget(cb_en)
+        hb = QHBoxLayout()
+        hb.addStretch(1)
+        b_ok = QPushButton('保存')
+        b_ok.setDefault(True)
+        b_cancel = QPushButton('取消')
+        hb.addWidget(b_ok)
+        hb.addWidget(b_cancel)
+        v.addLayout(hb)
+
+        def sync_mode():
+            kw = cb_mode.currentIndex() == 1
+            for w in (ed_kw, cb_menc):
+                w.setVisible(kw)
+                form.labelForField(w).setVisible(kw)
+            for w in (sb_off, sb_len):
+                w.setVisible(not kw)
+                form.labelForField(w).setVisible(not kw)
+        cb_mode.currentIndexChanged.connect(lambda _: sync_mode())
+        sync_mode()
+
+        def do_save():
+            mode = 'keyword' if cb_mode.currentIndex() == 1 else 'extract'
+            name = ed_name.text().strip() or '未命名规则'
+            keyword = ed_kw.text().strip()
+            if mode == 'keyword':
+                if not keyword:
+                    QMessageBox.warning(dlg, '提示', '请填写匹配关键字')
+                    return
+                if cb_menc.currentIndex() == 0 and hex_to_bytes(keyword) is None:
+                    QMessageBox.warning(dlg, '提示', '匹配关键字 HEX 格式错误 (需偶数位, 空格分隔)')
+                    return
+            else:
+                if sb_len.value() < 1:
+                    QMessageBox.warning(dlg, '提示', '提取模式请填写提取长度 (至少 1 字节)')
+                    return
+            data = {
+                'id': (cur or {}).get('id') or new_rule_id(),
+                'name': name,
+                'dir': ['recv', 'send', 'both'][cb_dir.currentIndex()],
+                'mode': mode,
+                'keyword': keyword,
+                'startOffset': sb_off.value(),
+                'length': sb_len.value(),
+                'matchEnc': 'hex' if cb_menc.currentIndex() == 0 else 'text',
+                'dispEnc': 'hex' if cb_denc.currentIndex() == 0 else 'text',
+                'lenOp': cb_lenop.currentText(),
+                'lenVal': sb_lenval.value(),
+                'accumulate': cb_acc.isChecked(),
+                'enabled': cb_en.isChecked(),
+                'dedupType': ['none', 'match', 'all'][cb_dedup.currentIndex()],
+                'sortKey': ['time', 'value', 'count'][cb_sort.currentIndex()],
+                'sortDir': -1,
+            }
+            self.sniffer.upsert_rule(data)
+            self.sn_render()
+            dlg.accept()
+        b_ok.clicked.connect(do_save)
+        b_cancel.clicked.connect(dlg.reject)
+        dlg.exec()
+
+    # ---------- 导入/导出 ----------
+    def sn_export(self):
+        path, _ = QFileDialog.getSaveFileName(self, '导出快速匹配规则', 'linkcom_sniffer_rules.json', 'JSON (*.json)')
+        if not path:
+            return
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump({'rules': self.sniffer.rules}, f, ensure_ascii=False, indent=2)
+            self.append_log('已导出快速匹配规则: ' + path, False)
+        except Exception as e:
+            self.append_log('导出失败: ' + str(e), True)
+
+    def sn_import(self):
+        path, _ = QFileDialog.getOpenFileName(self, '导入快速匹配规则', '', 'JSON (*.json)')
+        if not path:
+            return
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                text = f.read()
+        except Exception as e:
+            self.append_log('导入失败: ' + str(e), True)
+            return
+        ok, msg = self.sniffer.import_rules(text)
+        self.append_log(msg, not ok)
+        if ok:
+            self.sn_render()
+
+    def sn_export_rule_records(self, rid):
+        r = self.sniffer.find_rule(rid)
+        if r is None:
+            return
+        safe = ''.join(ch for ch in (r.get('name') or rid) if ch not in '\\/:*?"<>|') or rid
+        path, _ = QFileDialog.getSaveFileName(self, '导出匹配记录', f'linkcom_sniffer_{safe}.json', 'JSON (*.json)')
+        if not path:
+            return
+        try:
+            with open(path, 'w', encoding='utf-8') as f:
+                f.write(self.sniffer.export_rule_records(r))
+            self.append_log('已导出匹配记录: ' + path, False)
+        except Exception as e:
+            self.append_log('导出失败: ' + str(e), True)
+
     def toggle_pause(self):
         self.paused = not self.paused
         self.btn_pause.setText('继续' if self.paused else '暂停')
@@ -1169,6 +1666,8 @@ class MainWindow(QWidget):
         self.append_log('已进入共享房间 ' + room, False)
         # 加入后立即下发完整配置 (通道类型 + 串口参数 + 聚合参数), 让链接端立刻看到
         self.send_config()
+        # 服务器在共享端接管时会复位串口状态, 这里补发一次当前通道状态
+        self._report_serial_state()
         # 共享中显示可点击的共享链接
         self._build_share_links()
         self.link_label.setVisible(True)
@@ -1193,7 +1692,7 @@ class MainWindow(QWidget):
         else:
             cfg = {}  # TCP 模式不携带 COM 参数
         agg = {'flushMs': self.sb_flush.value(), 'maxBufKb': self.sb_buf.value()}
-        self.client.send_config(cfg, mode, agg)
+        self.client.send_config(cfg, mode, agg, port_open=bool(self.channel and self.channel.is_open()))
 
     @Slot(object, str, object)
     def on_remote_cfg(self, cfg, mode, agg):

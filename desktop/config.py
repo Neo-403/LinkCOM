@@ -1,7 +1,10 @@
-"""LinkCOM 桌面端 - 配置读写 (linkcom.zwzw, 存于 exe/源码同目录)
+"""LinkCOM 桌面端 - 配置读写 (linkcom.zwzw)
 
-打包为 exe 后 __file__ 指向只读的临时目录(_MEIPASS), 不能再写 config.json,
-因此配置统一存到程序所在目录下的 linkcom.zwzw, 保证每次打开参数不丢失。
+配置文件查找优先级:
+  1. 程序同目录下的 linkcom.zwzw (便携模式: 打包 exe 为 exe 所在目录, 开发态为源码目录)
+  2. 用户目录下 LinkCOM/linkcom.zwzw (同目录没有时使用, 目录与文件在保存时自动创建)
+
+同目录无配置时落到用户目录, 兼顾便携使用与程序被放在只读位置 (如 Program Files) 时仍可保存参数。
 """
 import json
 import os
@@ -9,13 +12,21 @@ import sys
 
 
 def _config_dir():
-    # 打包(exe)时存到 exe 所在目录; 开发时存到源码目录
+    # 打包(exe)时为 exe 所在目录; 开发时为源码目录
     if getattr(sys, 'frozen', False):
         return os.path.dirname(os.path.abspath(sys.executable))
     return os.path.dirname(os.path.abspath(__file__))
 
 
-CONFIG_PATH = os.path.join(_config_dir(), 'linkcom.zwzw')
+LOCAL_CONFIG_PATH = os.path.join(_config_dir(), 'linkcom.zwzw')
+USER_CONFIG_PATH = os.path.join(os.path.expanduser('~'), 'LinkCOM', 'linkcom.zwzw')
+
+
+def get_config_path():
+    """实际使用的配置路径: 同目录存在 linkcom.zwzw 则优先, 否则用用户目录下的 LinkCOM/linkcom.zwzw"""
+    if os.path.exists(LOCAL_CONFIG_PATH):
+        return LOCAL_CONFIG_PATH
+    return USER_CONFIG_PATH
 
 
 def default_config():
@@ -51,10 +62,15 @@ def default_config():
             "autoScroll": True,
             "paused": False,
         },
+        "sniffer": {
+            "rules": [],
+            "records": [],
+        },
     }
 
 
-def load_config(path=CONFIG_PATH):
+def load_config(path=None):
+    path = path or get_config_path()
     cfg = default_config()
     if os.path.exists(path):
         try:
@@ -71,9 +87,11 @@ def load_config(path=CONFIG_PATH):
     return cfg
 
 
-def save_config(cfg, path=CONFIG_PATH):
-    # 目录只读等异常时静默失败, 不阻塞程序
+def save_config(cfg, path=None):
+    path = path or get_config_path()
+    # 目录只读等异常时静默失败, 不阻塞程序; 用户目录 LinkCOM/ 不存在时自动创建
     try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, 'w', encoding='utf-8') as f:
             json.dump(cfg, f, indent=2, ensure_ascii=False)
     except Exception:

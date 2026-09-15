@@ -29,5 +29,9 @@
     "encoding": "utf8",
     "autoScroll": true,
     "paused": false
+  },
+  "sniffer": {
+    "rules": [],
+    "records": []
   }
 }

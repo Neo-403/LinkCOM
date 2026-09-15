@@ -21,8 +21,9 @@ WebSocket 转发到 [LinkCOM](../server.js) 服务器房间，其它设备（手
 ```
 desktop/
   main.py                 入口 (支持 linkcom:// 启动参数与 --register)
-  main_window.py          PySide6 主窗口 (三模式 Tab / 日志 / 发送 / 状态)
-  linkcom_client.py       WebSocket 客户端 (协议复用 + 自动重连)
+  main_window.py          PySide6 主窗口 (三模式 Tab / 日志 / 发送 / 快速发送 / 快速匹配 / 状态)
+  sniffer.py              快速匹配核心 (规则匹配/聚合/导入导出, 与 Web 端 sniffer.js 互通)
+  linkcom_client.py       WebSocket 客户端 (协议复用 + 自动重连 + 串口状态上报)
   channels/
     base.py               通道抽象基类
     serial_channel.py     串口通道 (pyserial)
@@ -75,6 +76,20 @@ desktop/
 
 > 密码为空时链接不含 `pwd` 参数。
 
+## 快速匹配 (Sniffer)
+
+主窗口底部的「快速匹配」面板，功能与 Web 端 `sniffer.js` 一致，规则 JSON 与网页版可直接互导：
+
+- **提取** 模式：按「起点偏移 + 长度」直接从数据流提取字段，不依赖关键字；
+- **匹配关键字** 模式：在数据流中查找关键字（HEX 或文本），命中即记录一条；
+- 支持方向过滤（仅接收/仅发送/全部）、数据长度过滤、跨帧累积（流被拆包时勾选，偏移更准）；
+- 记录按规则聚合去重（不去重 / 匹配去重 / 全匹配去重），显示计数与首末时间，可按时间/值/次数排序；
+- 每条记录可「查看帧」，原始帧中命中段绿色高亮（HEX 与文本两种显示编码）；
+- 顶部支持 规则导入/导出、清空全部记录；单条规则支持 导出记录/清空/编辑/删除；
+- 规则与最近记录持久化在 `linkcom.zwzw` 的 `sniffer` 字段。
+
+桌面端收发的数据（通道接收 / 本端发送 / 链接端转发）都会旁路送入匹配引擎，暂停终端显示时暂停监听。此外桌面端会向链接端实时同步通道打开/关闭状态（`serial-state`），浏览器链接端在通道未打开时将无法发送，与 Web 共享端行为一致。
+
 ## URL Scheme（一键拉起）
 
 支持 `linkcom://` 协议，点击网页分享链接直接预填配置并打开客户端：
@@ -122,11 +137,11 @@ Win7 最高仅支持到 Python 3.8，且需对应的 PyInstaller 老版本（如
 
 > 注：现代 Windows（Win10/11）推荐用最新 Python + 最新 PyInstaller 打包即可。
 
-打包后配置会自动保存在 **exe 同目录** 的 `linkcom.zwzw` 中（开发时在源码目录），每次运行读取、修改后保存，参数不会丢失。
+配置文件查找优先级：**exe 同目录**存在 `linkcom.zwzw` 则优先使用（便携模式，开发态为源码目录）；否则使用**用户目录**下的 `LinkCOM\linkcom.zwzw`（首次保存配置时自动创建目录与文件），程序放在只读位置（如 Program Files）时也能正常保存参数。每次运行读取、修改后保存，参数不会丢失。
 
 ## 配置项 (linkcom.zwzw)
 
-首次运行会自动生成 `linkcom.zwzw`，可手动编辑后重启。字段结构与 `config.json.example` 一致：
-`server` / `basePath` / `room` / `pwd` / `mode` / `serial` / `tcpClient` / `tcpServer` / `display`。
+配置位置见上文查找优先级：同目录有 `linkcom.zwzw` 则优先使用，没有则用 `用户目录\LinkCOM\linkcom.zwzw`（首次保存时自动创建）。字段结构与 `config.json.example` 一致：
+`server` / `basePath` / `room` / `pwd` / `mode` / `serial` / `tcpClient` / `tcpServer` / `display` / `sniffer`（快速匹配的规则与记录）。
 
 > 注意：修改 WEB 服务器地址后**必须点击「开始共享」重新连接**才会生效。

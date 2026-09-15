@@ -4,7 +4,8 @@
   客户端 -> 服务器:
     { t:"join", room, role:"share", pwd? }
     { t:"serial-data", buf:"<base64>", src:"share" }
-    { t:"serial-config", cfg:{...} }
+    { t:"serial-config", cfg:{...}, mode, agg?, portOpen? }
+    { t:"serial-state", portOpen:bool }
     { t:"bye" }
   服务器 -> 客户端:
     { t:"ok", role, room, peers }
@@ -94,14 +95,26 @@ class LinkComClient:
                     self._log('发送数据失败: ' + str(e), True)
         return False
 
-    def send_config(self, cfg: dict, mode: str = 'serial', agg: dict = None):
+    def send_config(self, cfg: dict, mode: str = 'serial', agg: dict = None, port_open: bool = None):
         with self._lock:
             if self._ws and self._ws.sock and self._ws.sock.connected:
                 try:
                     msg = {'t': 'serial-config', 'cfg': cfg, 'mode': mode}
                     if agg is not None:
                         msg['agg'] = agg
+                    # 完整配置可一并携带最新通道打开状态, 供新加入的链接端同步
+                    if isinstance(port_open, bool):
+                        msg['portOpen'] = port_open
                     self._ws.send(json.dumps(msg))
+                except Exception:
+                    pass
+
+    def send_state(self, port_open: bool):
+        """通道打开/关闭状态实时同步给链接端 (serial-state), 使其未打开时无法发送"""
+        with self._lock:
+            if self._ws and self._ws.sock and self._ws.sock.connected:
+                try:
+                    self._ws.send(json.dumps({'t': 'serial-state', 'portOpen': bool(port_open)}))
                 except Exception:
                     pass
 
