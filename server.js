@@ -110,6 +110,7 @@ function leaveRoom(ws) {
   if (!room) return;
   if (role === 'share' && room.share === ws) {
     room.share = null;
+    room.sharePortOpen = false; // 共享端离开, 串口状态复位, 避免链接端残留"串口已开"
     // 通知所有链接端共享端已离开
     room.links.forEach((l) => send(l, { t: 'closed', reason: 'share-left' }));
   } else if (role === 'link') {
@@ -166,7 +167,7 @@ wss.on('connection', (ws) => {
           room.links.add(ws);
           // 若已有串口参数, 立即推给新加入的链接端 (解决后加入看不到配置的问题)
           // from:'share' 是必须的: 链接端据此识别是共享端下发并应用
-          if (room.cfg) send(ws, { t: 'serial-config', cfg: room.cfg.cfg, mode: room.cfg.mode, agg: room.cfg.agg, from: 'share' });
+          if (room.cfg) send(ws, { t: 'serial-config', cfg: room.cfg.cfg, mode: room.cfg.mode, agg: room.cfg.agg, portOpen: !!room.sharePortOpen, from: 'share' });
         }
 
         ws.meta = { roomId, role };
@@ -199,6 +200,16 @@ wss.on('connection', (ws) => {
         if (!room) return;
         room.sharePortOpen = !!msg.portOpen;
         room.links.forEach((l) => send(l, { t: 'serial-state', portOpen: room.sharePortOpen }));
+        break;
+      }
+
+      case 'serial-state-query': {
+        // 链接端加入后主动查询当前权威串口状态, 立即回灌, 消除时序/漏发导致的不一致
+        const { roomId, role } = ws.meta || {};
+        if (!roomId || role !== 'link') return;
+        const room = rooms.get(roomId);
+        if (!room) return;
+        send(ws, { t: 'serial-state', portOpen: !!room.sharePortOpen });
         break;
       }
 

@@ -2,6 +2,17 @@
 
 把本地电脑的串口 (COM 口) 通过浏览器共享到服务器，手机或任意远程电脑经浏览器实时收发该串口数据，实现**远程调试**。
 
+## 项目包含
+
+| 部分 | 目录 | 说明 |
+|---|---|---|
+| **后端** | `server.js` | WebSocket 房间转发 + 静态页服务（三端共用） |
+| **Web 端** | `public/` | 浏览器轻量客户端（共享端 / 链接端），本文档主要介绍它 |
+| **Flutter 端** | `linkcom_flutter/` | Windows + Android 一套代码；见 [`linkcom_flutter/README.md`](linkcom_flutter/README.md)、[`WINDOWS.md`](linkcom_flutter/WINDOWS.md)、[`ANDROID.md`](linkcom_flutter/ANDROID.md)（**推荐使用**） |
+| 旧桌面端 | `desktop/` | PySide6 版，**已停止维护**，功能已迁至 Flutter 端，仅作保留 |
+
+> 三端共用同一套中继协议（`server.js` 不需要区分客户端）。
+
 ## 特性
 - **共享端** (电脑): 用浏览器原生 **Web Serial API** 读取本地 COM 口，无需安装驱动/客户端
 - **链接端** (手机/电脑): 浏览器经 **WebSocket** 实时收发共享串口数据
@@ -176,4 +187,8 @@ package.json
 Dockerfile
 docker-compose.yml
 .dockerignore
+desktop/            旧 PySide6 桌面端(已停止维护, 仅保留)
+linkcom_flutter/    Flutter 客户端 (Windows + Android), 见其 README/ANDROID/WINDOWS
+VERSION             版本号唯一来源 (改版本只改这里)
+sync_version.py     由 VERSION 生成 public/version.js
 ```

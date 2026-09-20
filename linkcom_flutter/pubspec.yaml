@@ -1,0 +1,41 @@
+name: linkcom
+description: "LinkCOM - 跨平台串口共享调试工具 (Windows / Android)"
+publish_to: 'none' # 私有包, 不发布到 pub.dev
+version: 1.0.3+1
+environment:
+  sdk: ^3.11.3
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+
+  # 状态管理
+  provider: ^6.1.5+1
+  # 中继通信 (对接 server.js, 协议不变)
+  web_socket_channel: ^3.0.3
+  # USB 串口: Android(OTG) 用 usb_serial 0.3.0; Windows(COMx) 用 serial_port_win32 (纯 FFI, 免插件注册)
+  # 注意: usb_serial 官方仅支持 Android; flutter_usb_serial 是其早期不稳 Windows 包装层, 已弃用
+  usb_serial: ^0.5.2
+  # 安卓经典蓝牙 SPP (HC-05/06); Windows 蓝牙串口为虚拟 COMx, 走 usb_serial
+  # 注意: 原插件 0.4.0 与 AGP 8/Dart 3 不兼容, 已本地化到 plugins/ 并修补 (namespace/compileSdk/SDK约束)
+  flutter_bluetooth_serial:
+    path: plugins/flutter_bluetooth_serial
+  # 安卓前台服务保活 (息屏/切后台不断线)
+  flutter_background_service: ^5.1.0
+  gbk_codec: ^0.4.0
+  serial_port_win32: ^3.0.0
+  win32: ^6.0.0   # serial_port_win32 依赖, 显式引入以使用 NOPARITY/DCB_PARITY 等 Win32 常量
+  shared_preferences: ^2.5.0   # 配置/选项本地持久化
+  file_picker: ^13.1.0   # 导出历史自选保存位置(系统保存对话框)
+  url_launcher: ^6.3.1   # 设置页一键打开 GitHub 等项目主页
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

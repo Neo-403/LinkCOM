@@ -1,0 +1,29 @@
+// 本地化修补版: 原 flutter_bluetooth_serial 0.4.0 未声明 namespace, 使用旧 compileSdk 与已下线的
+// jcenter, 且 buildToolsVersion 过低, 在 AGP 8 下无法构建。此处补齐 namespace、提升 compileSdk、
+// 移除 buildToolsVersion / jcenter, 并显式依赖 androidX(core/appcompat)。
+group 'io.github.edufolly.flutterbluetoothserial'
+version '1.0-SNAPSHOT'
+
+apply plugin: 'com.android.library'
+
+android {
+    namespace 'io.github.edufolly.flutterbluetoothserial'
+    compileSdk 34
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    defaultConfig {
+        minSdk 21
+    }
+
+    lint {
+        disable 'InvalidPackage'
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+}

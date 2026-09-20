@@ -274,8 +274,11 @@
         break;
       case 'serial-config':
         if (m.from === 'link') {
-          if (m.cfg) await applyRemoteCfg(m.cfg);
+          // 关键顺序: 先应用聚合, 再应用串口参数.
+          // applyRemoteCfg 末尾会回广播(携带最新聚合), 若颠倒顺序会用旧聚合把链接端刚下发的值覆盖回去
           if (m.agg) applyRemoteAgg(m.agg);
+          if (m.cfg) await applyRemoteCfg(m.cfg);
+          else if (joined && wsOpen) sendFullCfg();
         }
         break;
     }
@@ -303,9 +306,9 @@
     if (cfg.stopBits != null) $('sbits').value = cfg.stopBits;
     if (cfg.parity) $('parity').value = String(cfg.parity).toLowerCase();
     if (cfg.flowControl) $('flow').value = String(cfg.flowControl).toLowerCase();
-    if (cfg.encoding) enc = cfg.encoding;
-    if (joined && wsOpen) sendFullCfg();
-    appendSys(`链接端请求修改串口参数: ${cfg.baudRate}/${cfg.dataBits}/${cfg.stopBits}/${cfg.parity}/${cfg.flowControl}/${cfg.encoding.toUpperCase()}`, 'sys');
+    // 编码需同时更新变量与下拉框, 否则界面显示与真实解码/回广播不一致
+    if (cfg.encoding) { enc = cfg.encoding; if ($('encoding')) $('encoding').value = cfg.encoding; }
+    appendSys(`链接端请求修改串口参数: ${cfg.baudRate}/${cfg.dataBits}/${cfg.stopBits}/${cfg.parity}/${cfg.flowControl}/${(cfg.encoding || enc).toUpperCase()}`, 'sys');
     if (portOpen) {
       const err = validateSerialOpts();
       if (err) { appendSys('未重开串口: ' + err + '。请在链接端选择受支持的参数后重试', 'err'); return; }
@@ -317,6 +320,8 @@
       if (portOpen) appendSys('串口已按新参数重新打开', 'sys');
       else appendSys('串口重开失败, 请手动点击「打开串口」', 'err');
     }
+    // 全部应用(含重开串口)后再回广播, 确保携带最新的串口参数+聚合+打开状态, 供各链接端收敛
+    if (joined && wsOpen) sendFullCfg();
   }
   function appendSys(text, cls) {
     if (paused) return;
@@ -661,10 +666,13 @@
   $('flushMs').onchange = () => {
     const v = parseInt($('flushMs').value, 10);
     if (!isNaN(v)) { FLUSH_MS = Math.max(0, Math.min(2000, v)); saveAggCfg(); }
+    // 立即广播给链接端(与编码一致), 否则仅重开串口时才同步
+    if (joined && wsOpen) sendFullCfg();
   };
   $('maxBuf').onchange = () => {
     const v = parseInt($('maxBuf').value, 10);
     if (!isNaN(v)) { MAX_BUF = Math.max(1, Math.min(1024, v)) * 1024; saveAggCfg(); }
+    if (joined && wsOpen) sendFullCfg();
   };
 
   // 房间码默认随机

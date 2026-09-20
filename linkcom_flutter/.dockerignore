@@ -1,0 +1,11 @@
+# Docker 构建上下文忽略项: 避免把宿主机产物/路径相关文件带进容器
+build/
+.dart_tool/
+.packages
+.idea/
+*.iml
+android/.gradle/
+android/local.properties
+android/app/.cxx/
+android/**/build/
+windows/flutter/ephemeral/

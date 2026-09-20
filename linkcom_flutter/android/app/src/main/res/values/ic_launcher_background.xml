@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 鑷€傚簲鍥炬爣鑳屾櫙鑹?(鐢?scripts/gen_app_icons.ps1 鐢熸垚, 鍕挎墜鍔ㄤ慨鏀? -->
+<resources>
+    <color name="ic_launcher_background">#FFFFFF</color>
+</resources>

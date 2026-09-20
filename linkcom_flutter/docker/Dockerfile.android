@@ -1,0 +1,34 @@
+# 用 Docker 构建 Android APK: 免本机安装 Android SDK/JDK。
+# 基础镜像自带 Flutter + Android SDK + JDK(17), 可避开本机 JDK 过新与 Gradle 不兼容的问题。
+#
+# 用法(在 linkcom_flutter 目录下执行):
+#   docker build --target apk --output "type=local,dest=build/apk-out" -f docker/Dockerfile.android .
+# 产物: linkcom_flutter/build/apk-out/app-release.apk
+#
+# 也可用脚本: powershell -ExecutionPolicy Bypass -File scripts/build_apk_docker.ps1
+# 指定 Flutter 版本(默认 stable):  docker build --build-arg FLUTTER_IMAGE=ghcr.io/cirruslabs/flutter:3.41.5 ...
+
+ARG FLUTTER_IMAGE=ghcr.io/cirruslabs/flutter:stable
+FROM ${FLUTTER_IMAGE} AS build
+
+WORKDIR /app
+
+# 先只拷依赖清单, 命中 Docker 层缓存, 依赖不变时无需重复 pub get
+COPY pubspec.yaml pubspec.lock* ./
+# 本地化插件(路径依赖)必须先于 pub get 就位, 否则解析不到 plugins/flutter_bluetooth_serial
+COPY plugins/ ./plugins/
+RUN flutter pub get
+
+# 再拷源码 (过滤规则见 linkcom_flutter/.dockerignore)
+COPY . .
+
+# 兜底: 受限构建环境(小内存容器/CI)下调低 Gradle 堆, 避免 daemon OOM 掉线
+# (Flutter 可能自动改写 gradle.properties, 故此处再强制一次)
+RUN sed -i 's/^org\.gradle\.jvmargs=.*/org.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=768m -XX:ReservedCodeCacheSize=256m/' android/gradle.properties
+
+# Android 许可证在基础镜像内已接受; 生成 release APK
+RUN flutter build apk --release
+
+# 仅导出 APK 产物 (配合 --output type=local,dest=... 直接把文件落到宿主机)
+FROM scratch AS apk
+COPY --from=build /app/build/app/outputs/flutter-apk/app-release.apk /

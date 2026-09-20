@@ -1,0 +1,184 @@
+name: 编译 Flutter 双端 (Windows + Android)
+
+on:
+  workflow_dispatch:       # 手动触发(在 tag 上触发则直接发布该 tag)
+  push:
+    tags: [ 'v*' ]         # 推送 v* 标签时自动构建并上传 Release
+
+permissions:
+  contents: write          # 创建/更新 Release 并上传资产需要写权限
+
+env:
+  # 与本地 `flutter --version` 保持一致(3.41.5 stable); 如需升级改这里即可
+  FLUTTER_VERSION: '3.41.5'
+
+jobs:
+  # 版本号以根目录 VERSION 为唯一来源, 供各构建任务命名产物
+  version:
+    name: 读取版本号
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 读取根 VERSION
+        id: ver
+        shell: bash
+        run: |
+          V=$(tr -d '[:space:]' < VERSION)
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+          echo "版本号: $V"
+
+  windows:
+    name: 构建 Windows 端
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      # Flutter 构建 Windows 插件时使用符号链接, 需要开发者模式
+      - name: 启用开发者模式(符号链接支持)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          New-ItemProperty -Path "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock" `
+            -Name AllowDevelopmentWithoutDevLicense -PropertyType DWORD -Value 1 -Force
+
+      - name: 配置 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      # 让 lib/version.dart 与 pubspec 的 version 跟随根 VERSION
+      - name: 同步版本号
+        run: python sync_version.py
+
+      - name: 获取依赖
+        working-directory: linkcom_flutter
+        run: flutter pub get
+
+      - name: 构建 Windows Release
+        working-directory: linkcom_flutter
+        run: flutter build windows --release
+
+      # exe 依赖同目录的 data/ 与 flutter_windows.dll, 必须整目录打包
+      - name: 打包 Windows 产物
+        shell: pwsh
+        run: |
+          $out = "LinkCOM_Win_v${{ needs.version.outputs.version }}.zip"
+          Compress-Archive -Path "linkcom_flutter/build/windows/x64/runner/Release/*" `
+            -DestinationPath $out -Force
+          Get-Item $out | Select-Object Name, Length
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release
+          path: LinkCOM_Win_v*.zip
+          if-no-files-found: error
+
+  android:
+    name: 构建 Android 端
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - name: 拉取代码
+        uses: actions/checkout@v4
+
+      - name: 配置 JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: 配置 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: 同步版本号
+        run: python sync_version.py
+
+      # 可选正式签名: 仓库 Secrets 配好以下 4 项即启用, 未配置则退回 debug 签名
+      #   ANDROID_KEYSTORE_BASE64 / ANDROID_STORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD
+      # 生成 base64:  base64 -w0 android/app/upload-keystore-zwzw.jks   (Windows: [Convert]::ToBase64String(...))
+      - name: 写入 Android 签名配置
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            echo "未配置 ANDROID_KEYSTORE_BASE64, 本次使用 debug 签名"
+            exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > linkcom_flutter/android/app/upload-keystore-zwzw.jks
+          {
+            echo "storeFile=upload-keystore-zwzw.jks"
+            echo "storePassword=$STORE_PASSWORD"
+            echo "keyAlias=$KEY_ALIAS"
+            echo "keyPassword=$KEY_PASSWORD"
+          } > linkcom_flutter/android/key.properties
+          ls -l linkcom_flutter/android/app/upload-keystore-zwzw.jks
+
+      - name: 获取依赖
+        working-directory: linkcom_flutter
+        run: flutter pub get
+
+      # 未配置签名密钥时使用 debug 签名(可直接侧载安装)
+      - name: 构建 Android Release APK
+        working-directory: linkcom_flutter
+        run: flutter build apk --release
+
+      - name: 校验 APK 签名
+        run: |
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --print-certs \
+            linkcom_flutter/build/app/outputs/flutter-apk/app-release.apk | head -3
+
+      - name: 重命名 APK
+        run: |
+          SRC=linkcom_flutter/build/app/outputs/flutter-apk/app-release.apk
+          DST="LinkCOM_Android_v${{ needs.version.outputs.version }}.apk"
+          cp "$SRC" "$DST"
+          ls -lh "$DST"
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-release
+          path: LinkCOM_Android_v*.apk
+          if-no-files-found: error
+
+  release:
+    name: 发布 Release
+    needs: [ version, windows, android ]
+    runs-on: ubuntu-latest
+    steps:
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 列出待发布文件
+        run: ls -lh dist
+
+      - name: 创建/更新 Release 并上传资产
+        uses: softprops/action-gh-release@v2
+        with:
+          # 打 tag 触发时用该 tag; 手动触发时用 v<版本号>
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || format('v{0}', needs.version.outputs.version) }}
+          name: LinkCOM v${{ needs.version.outputs.version }}
+          files: dist/*
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
