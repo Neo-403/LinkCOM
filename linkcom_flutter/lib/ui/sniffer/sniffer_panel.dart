@@ -1,9 +1,11 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../sniffer/sniffer_controller.dart';
+import '../widgets/active_toggle.dart';
 
 // 文件名用时间戳: yyyyMMdd_HHmmss
 String _stamp() {
@@ -22,7 +24,6 @@ class SnifferPanel extends StatefulWidget {
 
 class _SnifferPanelState extends State<SnifferPanel> {
   bool _expanded = false;
-  final Map<String, bool> _collapsed = {};
 
   String _ts(DateTime t) {
     String p(int n) => n.toString().padLeft(2, '0');
@@ -37,7 +38,11 @@ class _SnifferPanelState extends State<SnifferPanel> {
     final sn = context.watch<SnifferController>();
     final termEnc = widget.encoding;
     final c = Theme.of(context).colorScheme;
-    final totalRec = sn.records.length;
+    // 每条规则去重/排序后的记录; 摘要「记录 N」按聚合条数统计(与 Web/桌面端一致, 而非原始命中数)
+    final aggMap = <String, List<SnifferAgg>>{
+      for (final r in sn.rules) r.id: sn.aggsFor(r, termEnc),
+    };
+    final totalRec = aggMap.values.fold<int>(0, (s, l) => s + l.length);
     final enCount = sn.rules.where((r) => r.enabled).length;
 
     return Card(
@@ -137,7 +142,8 @@ class _SnifferPanelState extends State<SnifferPanel> {
                           fontSize: 12, color: c.onSurface.withValues(alpha: 0.55))),
                 )
               else
-                ...sn.rules.map((r) => _ruleBlock(sn, r, termEnc, c)),
+                ...sn.rules.map((r) =>
+                    _ruleBlock(sn, r, aggMap[r.id] ?? const [], termEnc, c)),
             ],
           ],
         ),
@@ -145,14 +151,17 @@ class _SnifferPanelState extends State<SnifferPanel> {
     );
   }
 
-  Widget _ruleBlock(SnifferController sn, SnifferRule r, String termEnc, ColorScheme c) {
-    final aggs = sn.aggsFor(r);
-    final collapsed = _collapsed[r.id] == true;
+  Widget _ruleBlock(SnifferController sn, SnifferRule r, List<SnifferAgg> aggs,
+      String termEnc, ColorScheme c) {
+    final collapsed = sn.collapsed[r.id] == true;
     final lenFilter = r.lenVal != 0 ? ' 长${r.lenOp}${r.lenVal}' : '';
     final dispLabel = r.dispEnc == 'hex' ? 'HEX' : '文本';
+    // meta 文案与 Web 端 renderRules 完全一致(关键字模式含 匹:matchEnc→显:)
     final meta = r.mode == 'keyword'
-        ? '${_dirLabel(r.dir)} | 匹配:${r.keyword} $lenFilter | 显:$dispLabel'
-        : '${_dirLabel(r.dir)} | 偏移:${r.startOffset} 取${r.length}字节$lenFilter | 显:$dispLabel';
+        ? '${_dirLabel(r.dir)} | 匹配:${r.keyword.isEmpty ? '-' : r.keyword}$lenFilter'
+            ' | 匹:${r.matchEnc}→显:$dispLabel'
+        : '${_dirLabel(r.dir)} | 偏移:${r.startOffset} 取${r.length}字节$lenFilter'
+            ' | 显:$dispLabel';
     return Container(
       margin: const EdgeInsets.only(top: 6),
       decoration: BoxDecoration(
@@ -167,30 +176,42 @@ class _SnifferPanelState extends State<SnifferPanel> {
             child: Row(
               children: [
                 InkWell(
-                  onTap: () => setState(() => _collapsed[r.id] = !collapsed),
+                  onTap: () => sn.toggleCollapsed(r.id),
                   child: Icon(collapsed ? Icons.chevron_right : Icons.expand_more,
                       size: 18),
                 ),
-                Checkbox(
-                  value: r.enabled,
-                  visualDensity: VisualDensity.compact,
-                  onChanged: (v) => sn.setEnabled(r, v ?? false),
+                ActiveToggle(
+                  active: r.enabled,
+                  onChanged: (v) => sn.setEnabled(r, v),
                 ),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    color: (r.enabled ? c.primary : c.onSurface)
-                        .withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(4),
+                    // Web .sn-badge: 启用=强调色实底, 未启用=透明底 + 描边
+                    color: r.enabled ? c.primary : Colors.transparent,
+                    border: Border.all(color: c.outline.withValues(alpha: 0.4)),
+                    borderRadius: BorderRadius.circular(6),
                   ),
-                  child: Text(_modeLabel(r.mode), style: const TextStyle(fontSize: 10)),
+                  child: Text(_modeLabel(r.mode),
+                      style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.bold,
+                          color: r.enabled
+                              ? c.onPrimary
+                              : c.onSurface.withValues(alpha: 0.6))),
                 ),
                 const SizedBox(width: 6),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(r.name, style: const TextStyle(fontSize: 13)),
+                      Text(r.name,
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: r.enabled
+                                  ? null
+                                  : c.onSurface.withValues(alpha: 0.5))),
                       Text('$meta${r.accumulate ? ' | 累积' : ''}',
                           style: TextStyle(
                               fontSize: 10,
@@ -200,17 +221,31 @@ class _SnifferPanelState extends State<SnifferPanel> {
                     ],
                   ),
                 ),
-                Text('${aggs.length}',
-                    style: TextStyle(fontSize: 11, color: c.primary)),
+                // Web .sn-rec-count: 数量 + 去重方式后缀
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                  decoration: BoxDecoration(
+                    color: c.onSurface.withValues(alpha: 0.06),
+                    border: Border.all(color: c.outline.withValues(alpha: 0.3)),
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                      '${aggs.length}${r.dedupType == 'match' ? ' (匹配去重)' : r.dedupType == 'all' ? ' (全匹配去重)' : ''}',
+                      style: TextStyle(
+                          fontSize: 10,
+                          color: c.onSurface.withValues(alpha: 0.6))),
+                ),
                 PopupMenuButton<String>(
                   tooltip: '更多',
                   onSelected: (v) {
                     if (v == 'edit') _openEditor(sn, r);
+                    if (v == 'exp') _exportRuleRecords(sn, r, termEnc);
                     if (v == 'clr') sn.clearRecords(r.id);
                     if (v == 'del') sn.removeRule(r.id);
                   },
                   itemBuilder: (_) => const [
                     PopupMenuItem(value: 'edit', child: Text('编辑')),
+                    PopupMenuItem(value: 'exp', child: Text('导出记录')),
                     PopupMenuItem(value: 'clr', child: Text('清空记录')),
                     PopupMenuItem(value: 'del', child: Text('删除规则')),
                   ],
@@ -227,6 +262,7 @@ class _SnifferPanelState extends State<SnifferPanel> {
                         fontSize: 11, color: c.onSurface.withValues(alpha: 0.45))),
               )
             else
+              // Web 端展示全部聚合记录(不设行数上限)
               ...aggs.map((a) => _recRow(sn, r, a, termEnc, c)),
         ],
       ),
@@ -235,8 +271,44 @@ class _SnifferPanelState extends State<SnifferPanel> {
 
   Widget _recRow(
       SnifferController sn, SnifferRule r, SnifferAgg a, String termEnc, ColorScheme c) {
-    final seg = a.raw.sublist(a.hlStart, a.hlEnd);
-    final value = SnifferController.decodeField(seg, r.dispEnc, termEnc);
+    // 与 Web 端 recordValueHtml 一致:
+    //  匹配去重(dedupType=='match') → 只显示命中段, 强调色 + 底色胶囊(.hl-val)
+    //  其它 → 显示整帧(截断 48 字节 + …), 命中段在其中高亮
+    final full = r.dedupType != 'match';
+    final hlS = a.hlStart.clamp(0, a.raw.length);
+    final hlE = a.hlEnd.clamp(hlS, a.raw.length);
+    final enc = r.dispEnc == 'text' ? termEnc : r.dispEnc;
+    final Widget valWidget;
+    if (full) {
+      valWidget = RichText(
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        text: TextSpan(
+          style: TextStyle(
+              fontSize: 11,
+              fontFamily: 'monospace',
+              color: c.onSurface.withValues(alpha: 0.75)),
+          children: _frameByteSpans(a.raw, hlS, hlE, enc, c, max: 48),
+        ),
+      );
+    } else {
+      valWidget = Container(
+        padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+        decoration: BoxDecoration(
+          color: c.primary.withValues(alpha: 0.18),
+          borderRadius: BorderRadius.circular(4),
+        ),
+        child: Text(
+            SnifferController.decodeField(
+                a.raw.sublist(hlS, hlE), r.dispEnc, termEnc),
+            style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+                fontFamily: 'monospace',
+                color: c.primary),
+            overflow: TextOverflow.ellipsis),
+      );
+    }
     return Padding(
       padding: const EdgeInsets.fromLTRB(30, 2, 6, 2),
       child: Row(
@@ -248,14 +320,17 @@ class _SnifferPanelState extends State<SnifferPanel> {
                   color: c.onSurface.withValues(alpha: 0.45))),
           const SizedBox(width: 8),
           Expanded(
-            child: Text(value,
-                style: TextStyle(
-                    fontSize: 12, fontFamily: 'monospace', color: c.primary),
-                overflow: TextOverflow.ellipsis),
+            child: Align(alignment: Alignment.centerLeft, child: valWidget),
           ),
           if (a.count > 1)
             Text('×${a.count}',
-                style: TextStyle(fontSize: 11, color: c.onSurface.withValues(alpha: 0.6))),
+                style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    // Web .sn-rec-cnt 用 --warn
+                    color: c.brightness == Brightness.dark
+                        ? const Color(0xFFFBBF24)
+                        : const Color(0xFFD97706))),
           const SizedBox(width: 4),
           TextButton(
             onPressed: () => _viewFrames(sn, r, a, termEnc),
@@ -277,30 +352,38 @@ class _SnifferPanelState extends State<SnifferPanel> {
       builder: (ctx) {
         final c = Theme.of(ctx).colorScheme;
         return AlertDialog(
-          title: Text('帧记录 (共 ${refs.length} 次) · 编码: ${enc.toUpperCase()}'),
+          title: Text('帧记录 (共 ${refs.length} 次) · 编码: $enc'),
           content: SizedBox(
             width: 460,
             child: SingleChildScrollView(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: List.generate(refs.length, (i) {
-                  final rec = refs[refs.length - 1 - i];
+                  final rec = refs[i];
                   return Padding(
                     padding: const EdgeInsets.symmetric(vertical: 3),
                     child: Row(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
+                        // 与 Web 端 viewFrames 一致: 时间戳 + #序号
+                        Text('${_ts(rec.ts)} ',
+                            style: TextStyle(
+                                fontSize: 10,
+                                color: c.onSurface.withValues(alpha: 0.5))),
                         Text('#${i + 1} ',
                             style: TextStyle(
-                                fontSize: 11, color: c.onSurface.withValues(alpha: 0.5))),
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: c.onSurface.withValues(alpha: 0.5))),
                         Expanded(
                           child: RichText(
                               text: TextSpan(
-                                  style: const TextStyle(
+                                  style: TextStyle(
                                       fontSize: 12,
                                       fontFamily: 'monospace',
-                                      color: Colors.black),
-                                  children: _frameSpans(rec, enc, c))),
+                                      color: c.onSurface),
+                                  children: _frameByteSpans(
+                                      rec.raw, rec.hlStart, rec.hlEnd, enc, c))),
                         ),
                       ],
                     ),
@@ -317,12 +400,14 @@ class _SnifferPanelState extends State<SnifferPanel> {
     );
   }
 
-  // 完整帧文本, 命中区间用主色高亮; 按规则显示编码呈现(HEX 逐字节 / 其它逐字符), 与 Web 一致
-  List<TextSpan> _frameSpans(SnifferRecord rec, String enc, ColorScheme c) {
-    final raw = rec.raw;
+  // 完整帧逐字节渲染: 命中段用强调色 + 底色高亮(与 Web 端 .hl 一致)
+  // max>0 时截断到 max 字节并以 … 结尾(Web 端记录行上限 48 字节)
+  List<TextSpan> _frameByteSpans(Uint8List raw, int hlS, int hlE, String enc,
+      ColorScheme c, {int max = 0}) {
+    final n = (max > 0 && raw.length > max) ? max : raw.length;
     final spans = <TextSpan>[];
-    for (var i = 0; i < raw.length; i++) {
-      final inHl = i >= rec.hlStart && i < rec.hlEnd;
+    for (var i = 0; i < n; i++) {
+      final inHl = i >= hlS && i < hlE;
       final String s;
       if (enc == 'hex') {
         s = '${raw[i].toRadixString(16).padLeft(2, '0').toUpperCase()} ';
@@ -332,11 +417,17 @@ class _SnifferPanelState extends State<SnifferPanel> {
       }
       spans.add(TextSpan(
         text: s,
-        style: TextStyle(
-          color: inHl ? c.primary : c.onSurface.withValues(alpha: 0.7),
-          fontWeight: inHl ? FontWeight.bold : FontWeight.normal,
-        ),
+        style: inHl
+            ? TextStyle(
+                color: c.primary,
+                backgroundColor: c.primary.withValues(alpha: 0.18))
+            : TextStyle(color: c.onSurface.withValues(alpha: 0.7)),
       ));
+    }
+    if (max > 0 && raw.length > max) {
+      spans.add(TextSpan(
+          text: enc == 'hex' ? ' …' : '…',
+          style: TextStyle(color: c.onSurface.withValues(alpha: 0.5))));
     }
     return spans;
   }
@@ -460,16 +551,18 @@ class _SnifferPanelState extends State<SnifferPanel> {
                       ], (v) => setDlg(() => sortKey = v)),
                     ),
                   ]),
-                  CheckboxListTile(
+                  SwitchListTile(
                     value: accumulate,
-                    onChanged: (v) => setDlg(() => accumulate = v ?? false),
-                    title: const Text('跨帧累积 (流被拆开时勾选)'),
+                    activeColor: Colors.green,
+                    onChanged: (v) => setDlg(() => accumulate = v),
+                    title: const Text('跨帧累积 (流被拆开时开启)'),
                     dense: true,
                     contentPadding: EdgeInsets.zero,
                   ),
-                  CheckboxListTile(
+                  SwitchListTile(
                     value: enabled,
-                    onChanged: (v) => setDlg(() => enabled = v ?? false),
+                    activeColor: Colors.green,
+                    onChanged: (v) => setDlg(() => enabled = v),
                     title: const Text('启用'),
                     dense: true,
                     contentPadding: EdgeInsets.zero,
@@ -552,14 +645,13 @@ class _SnifferPanelState extends State<SnifferPanel> {
     );
   }
 
-  Future<void> _exportRules(SnifferController sn) async {
-    final text = const JsonEncoder.withIndent('  ')
-        .convert({'rules': sn.rules.map((e) => e.toJson()).toList()});
+  // 保存 JSON 文本到文件: 优先 saveFile, 平台未实现时退回选目录
+  Future<void> _saveJson(String text, String fileName, String dialogTitle) async {
     String? savedPath;
     try {
       final uri = await FilePicker.saveFile(
-        dialogTitle: '导出匹配规则',
-        fileName: 'linkcom_rules_${_stamp()}.json',
+        dialogTitle: dialogTitle,
+        fileName: fileName,
         bytes: utf8.encode(text),
         type: FileType.custom,
         allowedExtensions: ['json'],
@@ -576,8 +668,7 @@ class _SnifferPanelState extends State<SnifferPanel> {
       try {
         final dir = await FilePicker.getDirectoryPath(dialogTitle: '选择保存位置');
         if (dir == null) return;
-        final file =
-            File('$dir${Platform.pathSeparator}linkcom_rules_${_stamp()}.json');
+        final file = File('$dir${Platform.pathSeparator}$fileName');
         await file.writeAsBytes(utf8.encode(text));
         savedPath = file.path;
       } catch (e) {
@@ -586,6 +677,33 @@ class _SnifferPanelState extends State<SnifferPanel> {
       }
     }
     _hint('已导出到: $savedPath');
+  }
+
+  Future<void> _exportRules(SnifferController sn) async {
+    final text = const JsonEncoder.withIndent('  ')
+        .convert({'rules': sn.rules.map((e) => e.toJson()).toList()});
+    await _saveJson(text, 'linkcom_rules_${_stamp()}.json', '导出匹配规则');
+  }
+
+  // 仅导出某条规则的记录(格式与 Web/桌面端 exportRecords 一致)
+  Future<void> _exportRuleRecords(
+      SnifferController sn, SnifferRule r, String termEnc) async {
+    final recs = sn.records.where((x) => x.ruleId == r.id).map((x) {
+      return {
+        'ts': _ts(x.ts),
+        'rawHex': SnifferController.bytesToHex(x.raw),
+        'hl': {'start': x.hlStart, 'end': x.hlEnd},
+        'value': sn.displayValueOf(
+            SnifferAgg(x.raw, x.hlStart, x.hlEnd, 1, x.ts, x.ts, [x]),
+            r,
+            termEnc),
+      };
+    }).toList();
+    final safe = (r.name.isEmpty ? r.id : r.name)
+        .replaceAll(RegExp(r'[\\/:*?"<>|]'), '_');
+    final text = const JsonEncoder.withIndent('  ')
+        .convert({'rule': safe, 'dispEnc': r.dispEnc, 'records': recs});
+    await _saveJson(text, 'linkcom_sniffer_$safe.json', '导出匹配记录');
   }
 
   Future<void> _importRules(SnifferController sn) async {

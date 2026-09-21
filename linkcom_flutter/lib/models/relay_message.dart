@@ -44,6 +44,20 @@ RelayMessage msgSerialState(bool open) => RelayMessage('serial-state', {'portOpe
 RelayMessage msgSerialStateQuery() => RelayMessage('serial-state-query', const {});
 
 RelayMessage msgSerialConfig(SerialConfig cfg, SerialChannelMode mode, AggConfig agg) =>
-    RelayMessage('serial-config', {'cfg': cfg.toJson(), 'mode': mode.name, 'agg': agg.toJson()});
+    RelayMessage('serial-config', {
+      // TCP 通道无串口参数, 不下发 cfg(与 Web 端一致: 仅 serial 模式带 cfg)
+      if (mode == SerialChannelMode.serial) 'cfg': cfg.toJson(),
+      'mode': mode.name,
+      'agg': agg.toJson(),
+    });
+
+// 链接端回传配置给共享端 (带链接端已知的共享通道类型)
+RelayMessage msgSerialConfigLink(
+        SerialConfig cfg, AggConfig agg, SerialChannelMode mode) =>
+    RelayMessage('serial-config', {
+      if (mode == SerialChannelMode.serial) 'cfg': cfg.toJson(),
+      'mode': mode.name,
+      'agg': agg.toJson(),
+    });
 
 RelayMessage msgBye() => RelayMessage('bye');

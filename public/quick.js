@@ -60,7 +60,6 @@
       this.el.impFile = document.getElementById('qsImportFile');
       this.el.expBtn = document.getElementById('qsExportBtn');
       this.el.resetBtn = document.getElementById('qsResetBtn');
-      this.el.clearBtn = document.getElementById('qsClearBtn');
       this.el.toggleBtn = document.getElementById('qsToggle');
       // 模态框
       this.el.mask = document.getElementById('qsModalMask');
@@ -80,7 +79,6 @@
       this.el.stopBtn && this.el.stopBtn.addEventListener('click', () => this.stopRun());
       this.el.expBtn && this.el.expBtn.addEventListener('click', () => this.exportJson());
       this.el.resetBtn && this.el.resetBtn.addEventListener('click', () => this.resetToDefaults());
-      this.el.clearBtn && this.el.clearBtn.addEventListener('click', () => this.clearAll());
       this.el.impBtn && this.el.impBtn.addEventListener('click', () => this.el.impFile && this.el.impFile.click());
       this.el.impFile && this.el.impFile.addEventListener('change', (e) => this.importJson(e));
       this.el.toggleBtn && this.el.toggleBtn.addEventListener('click', () => this.toggle());
@@ -140,15 +138,6 @@
       await this.loadDefaults();
       this.render();
       this.hint('已重置为服务器默认示例');
-    }
-
-    clearAll() {
-      if (!this.items.length) { this.hint('列表已是空的'); return; }
-      if (!confirm('确定清空所有快速发送条目吗? (如需服务器示例请点「重置为默认」)')) return;
-      this.stopRun();
-      this.items = [];
-      this.render();
-      this.hint('已清空列表');
     }
 
     // ---------- 折叠/展开 ----------

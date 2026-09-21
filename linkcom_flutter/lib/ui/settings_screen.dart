@@ -45,7 +45,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
           focusNode: _focus,
           decoration: const InputDecoration(
             labelText: '中继服务器地址 (WebSocket)',
-            hintText: 'ws://host:port/ws',
+            // 路径可省略 /ws: 连不上时会自动补 /ws 重试
+            hintText: 'wss://host:8443/linkcom (可省略 /ws)',
           ),
           onChanged: (v) => s.serverUrl = v.trim(),
         ),

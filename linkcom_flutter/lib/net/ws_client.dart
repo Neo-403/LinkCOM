@@ -5,25 +5,69 @@ import '../models/relay_message.dart';
 
 typedef RelayHandler = void Function(RelayMessage msg);
 
+// 服务器地址规整: 去空格; http->ws / https->wss; 路径为空时补 /ws; 去掉末尾斜杠。
+// 这样用户填 wss://host:8443/linkcom 即可, 不必手动补 /ws。
+String normalizeServerUrl(String raw) {
+  var s = raw.trim();
+  if (s.isEmpty) return s;
+  var u = Uri.tryParse(s);
+  if (u == null) return s;
+  if (u.scheme == 'http') {
+    s = 'ws${s.substring(4)}';
+    u = Uri.parse(s);
+  } else if (u.scheme == 'https') {
+    s = 'wss${s.substring(5)}';
+    u = Uri.parse(s);
+  }
+  var path = u.path;
+  while (path.endsWith('/')) {
+    path = path.substring(0, path.length - 1);
+  }
+  if (path.isEmpty) path = '/ws';
+  return u.replace(path: path).toString();
+}
+
+// 候选地址: 先用用户填的路径; 若它没有以 /ws 结尾, 再追加一个补 /ws 的候选。
+// 服务器本身不需要 /ws 时, 第一个候选就能连上, 不会多加路径。
+List<String> urlCandidates(String url) {
+  final list = <String>[url];
+  final u = Uri.tryParse(url);
+  if (u != null && u.host.isNotEmpty && !u.path.toLowerCase().endsWith('/ws')) {
+    final p = u.path.isEmpty || u.path == '/' ? '/ws' : '${u.path}/ws';
+    list.add(u.replace(path: p).toString());
+  }
+  return list;
+}
+
 // 中继 WebSocket 客户端: 对接 server.js, 自动重连 + 心跳
 class WsClient {
   WsClient({
-    required this.url,
+    required String url,
     required this.onMessage,
     this.onConnected,
     this.onDisconnected,
     this.onError,
-  });
-  final String url;
+    this.onInfo,
+  })  : url = normalizeServerUrl(url),
+        _candidates = urlCandidates(normalizeServerUrl(url));
+
+  final String url; // 规整后的首选地址(用于显示)
   final RelayHandler onMessage;
   final void Function()? onConnected;
   final void Function()? onDisconnected;
   final void Function(Object)? onError;
+  // 提示信息(如自动补 /ws 重试), 由上层记为系统日志
+  final void Function(String)? onInfo;
+
+  final List<String> _candidates;
+  int _idx = 0;
+  String get effectiveUrl => _candidates[_idx];
 
   WebSocketChannel? _ch;
   bool _connected = false;
   bool _connecting = false;
   bool _closedByUser = false;
+  bool _candConnected = false; // 当前候选地址是否曾连上过
   Timer? _reconnectTimer;
   Timer? _heartbeat;
 
@@ -31,10 +75,8 @@ class WsClient {
 
   // 地址是否可用: 必须是 ws:// 或 wss:// 且有主机名
   bool get _urlOk {
-    final u = Uri.tryParse(url.trim());
-    return u != null &&
-        (u.scheme == 'ws' || u.scheme == 'wss') &&
-        u.host.isNotEmpty;
+    final u = Uri.tryParse(effectiveUrl);
+    return u != null && (u.scheme == 'ws' || u.scheme == 'wss') && u.host.isNotEmpty;
   }
 
   void connect() {
@@ -58,12 +100,13 @@ class WsClient {
           '中继服务器地址无效: "$url" (需以 ws:// 或 wss:// 开头)'));
       return;
     }
+    _candConnected = false;
     WebSocketChannel ch;
     try {
-      ch = WebSocketChannel.connect(Uri.parse(url));
+      ch = WebSocketChannel.connect(Uri.parse(effectiveUrl));
     } catch (e) {
       _connecting = false;
-      _scheduleReconnect();
+      _afterFail();
       return;
     }
     _ch = ch;
@@ -93,6 +136,7 @@ class WsClient {
       _connecting = false;
       if (_connected) return;
       _connected = true;
+      _candConnected = true;
       _startHeartbeat();
       onConnected?.call();
     }).catchError((Object e) {
@@ -107,6 +151,19 @@ class WsClient {
     _connected = false;
     if (was) onDisconnected?.call();
     if (error != null) onError?.call(error);
+    _afterFail();
+  }
+
+  // 失败后处理: 当前地址没连上过且还有候选(如补 /ws 的版本) → 立刻换下一个; 否则等 2s 重连
+  void _afterFail() {
+    _heartbeat?.cancel();
+    if (_closedByUser) return;
+    if (!_candConnected && _idx + 1 < _candidates.length) {
+      _idx++;
+      onInfo?.call('服务器地址自动补全为 ${_candidates[_idx]} 重试');
+      _open();
+      return;
+    }
     _scheduleReconnect();
   }
 

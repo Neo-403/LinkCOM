@@ -1,9 +1,24 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:gbk_codec/gbk_codec.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 String _uid() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+
+// 记录时间戳 HH:mm:ss (与 Web/桌面端记录格式一致)
+String _tsStr(DateTime t) {
+  String p(int n) => n.toString().padLeft(2, '0');
+  return '${p(t.hour)}:${p(t.minute)}:${p(t.second)}';
+}
+
+DateTime _parseTs(String s) {
+  final now = DateTime.now();
+  final m = RegExp(r'^(\d{1,2}):(\d{1,2}):(\d{1,2})').firstMatch(s);
+  if (m == null) return now;
+  return DateTime(now.year, now.month, now.day, int.parse(m.group(1)!),
+      int.parse(m.group(2)!), int.parse(m.group(3)!));
+}
 
 int _toInt(dynamic v) {
   if (v is int) return v;
@@ -115,8 +130,16 @@ class SnifferController extends ChangeNotifier {
   SnifferController({this.storageKey = 'linkcom_sniffer'});
   List<SnifferRule> rules = [];
   final List<SnifferRecord> records = []; // 新→旧
+  final Map<String, bool> collapsed = {}; // 规则折叠状态(持久化, 与 Web/桌面端一致)
   final List<int> _accRecv = [];
   final List<int> _accSend = [];
+  Timer? _persistTimer;
+
+  @override
+  void dispose() {
+    _persistTimer?.cancel();
+    super.dispose();
+  }
 
   Future<void> load() async {
     try {
@@ -124,22 +147,80 @@ class SnifferController extends ChangeNotifier {
       final raw = p.getString(storageKey);
       if (raw != null) {
         final j = jsonDecode(raw);
-        if (j is Map && j['rules'] is List) {
-          rules = (j['rules'] as List)
-              .whereType<Map>()
-              .map((e) => SnifferRule.fromJson(Map<String, dynamic>.from(e)))
-              .toList();
+        if (j is Map) {
+          if (j['rules'] is List) {
+            rules = (j['rules'] as List)
+                .whereType<Map>()
+                .map((e) => SnifferRule.fromJson(Map<String, dynamic>.from(e)))
+                .toList();
+          }
+          if (j['records'] is List) {
+            records.clear();
+            records.addAll(_decodeRecords(j['records'] as List));
+          }
+          if (j['collapsed'] is Map) {
+            collapsed.clear();
+            for (final e in (j['collapsed'] as Map).entries) {
+              collapsed[e.key.toString()] = e.value == true;
+            }
+          }
         }
       }
     } catch (_) {}
     notifyListeners();
   }
 
+  // 记录持久化: 与 Web/桌面端互通({ruleId, rawHex, hl:{start,end}, ts})
+  List<SnifferRecord> _decodeRecords(List list) {
+    final out = <SnifferRecord>[];
+    for (final e in list) {
+      if (e is! Map) continue;
+      final raw = hexToBytes((e['rawHex'] ?? '').toString());
+      if (raw == null || raw.isEmpty) continue;
+      final hl = e['hl'];
+      var s = 0, en = raw.length;
+      if (hl is Map) {
+        s = _toInt(hl['start']);
+        en = _toInt(hl['end']);
+      } else if (hl is List && hl.length >= 2) {
+        s = _toInt(hl[0]);
+        en = _toInt(hl[1]);
+      }
+      s = s.clamp(0, raw.length);
+      en = en.clamp(s, raw.length);
+      out.add(SnifferRecord((e['ruleId'] ?? '').toString(), raw, s, en,
+          _parseTs((e['ts'] ?? '').toString())));
+    }
+    return out;
+  }
+
   Future<void> persist() async {
     try {
       final p = await SharedPreferences.getInstance();
-      await p.setString(storageKey, jsonEncode({'rules': rules.map((e) => e.toJson()).toList()}));
+      // 记录仅保留最近 1000 条(与桌面端 to_storage(cap=1000) 一致)
+      final recs = records
+          .take(1000)
+          .map((r) => {
+                'ruleId': r.ruleId,
+                'rawHex': bytesToHex(r.raw),
+                'hl': {'start': r.hlStart, 'end': r.hlEnd},
+                'ts': _tsStr(r.ts),
+              })
+          .toList();
+      await p.setString(
+          storageKey,
+          jsonEncode({
+            'rules': rules.map((e) => e.toJson()).toList(),
+            'records': recs,
+            'collapsed': collapsed,
+          }));
     } catch (_) {}
+  }
+
+  // 记录变化后延时落盘: 避免每帧都写 SharedPreferences(Web 端为 scan 后立即 persist)
+  void _schedulePersist() {
+    _persistTimer?.cancel();
+    _persistTimer = Timer(const Duration(milliseconds: 800), persist);
   }
 
   // ---------- 工具 ----------
@@ -254,6 +335,7 @@ class SnifferController extends ChangeNotifier {
     }
     if (changed) {
       notifyListeners();
+      _schedulePersist(); // 记录变化后延时落盘(与 Web 端 scan 后 persist 一致)
     }
     return changed;
   }
@@ -280,18 +362,20 @@ class SnifferController extends ChangeNotifier {
   }
 
   // ---------- 记录查询 (去重 + 排序) ----------
-  List<SnifferAgg> aggsFor(SnifferRule rule) {
+  List<SnifferAgg> aggsFor(SnifferRule rule, [String termEnc = 'utf8']) {
     final list = records.where((r) => r.ruleId == rule.id).toList();
     final dt = rule.dedupType;
     if (dt == 'none') {
       return list
           .map((r) => SnifferAgg(r.raw, r.hlStart, r.hlEnd, 1, r.ts, r.ts, [r]))
-          .toList();
+          .toList()
+        ..sort((a, b) => _cmp(a, b, rule, termEnc));
     }
     String keyOf(SnifferRecord r) {
       if (dt == 'all') return bytesToHex(r.raw);
-      final seg = r.raw.sublist(r.hlStart, r.hlEnd);
-      return bytesToHex(seg);
+      // 命中区间越界时视为空 key(与 Web/桌面端 guard 一致)
+      if (r.hlStart >= r.hlEnd || r.hlEnd > r.raw.length) return '';
+      return bytesToHex(r.raw.sublist(r.hlStart, r.hlEnd));
     }
 
     final map = <String, SnifferAgg>{};
@@ -311,20 +395,28 @@ class SnifferController extends ChangeNotifier {
         out.add(e);
       }
     }
-    final dir = -1;
-    out.sort((a, b) {
-      int c;
-      if (rule.sortKey == 'count') {
-        c = a.count - b.count;
-      } else if (rule.sortKey == 'value') {
-        c = bytesToHex(a.raw.sublist(a.hlStart, a.hlEnd))
-            .compareTo(bytesToHex(b.raw.sublist(b.hlStart, b.hlEnd)));
-      } else {
-        c = a.lastTs.compareTo(b.lastTs);
-      }
-      return c * dir;
-    });
+    // sortDir 与 Web/桌面端一致固定为 -1(降序)
+    out.sort((a, b) => _cmp(a, b, rule, termEnc));
     return out;
+  }
+
+  int _cmp(SnifferAgg a, SnifferAgg b, SnifferRule rule, String termEnc) {
+    int c;
+    if (rule.sortKey == 'count') {
+      c = a.count - b.count;
+    } else if (rule.sortKey == 'value') {
+      c = displayValueOf(a, rule, termEnc)
+          .compareTo(displayValueOf(b, rule, termEnc));
+    } else {
+      c = a.lastTs.compareTo(b.lastTs);
+    }
+    return c * -1;
+  }
+
+  // 命中段按规则显示编码解码(记录行展示 + 「按值」排序, 与 Web/桌面端 displayValue 一致)
+  String displayValueOf(SnifferAgg a, SnifferRule rule, String termEnc) {
+    if (a.hlStart >= a.hlEnd || a.hlEnd > a.raw.length) return '';
+    return decodeField(a.raw.sublist(a.hlStart, a.hlEnd), rule.dispEnc, termEnc);
   }
 
   // ---------- 变更 ----------
@@ -342,6 +434,7 @@ class SnifferController extends ChangeNotifier {
   void removeRule(String id) {
     rules.removeWhere((x) => x.id == id);
     records.removeWhere((x) => x.ruleId == id);
+    collapsed.remove(id);
     notifyListeners();
     persist();
   }
@@ -363,6 +456,13 @@ class SnifferController extends ChangeNotifier {
 
   void setEnabled(SnifferRule r, bool v) {
     r.enabled = v;
+    notifyListeners();
+    persist();
+  }
+
+  // 规则折叠/展开(状态持久化, 与 Web 端 _collapsed 一致)
+  void toggleCollapsed(String ruleId) {
+    collapsed[ruleId] = !(collapsed[ruleId] ?? false);
     notifyListeners();
     persist();
   }

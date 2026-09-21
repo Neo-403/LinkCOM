@@ -12,6 +12,7 @@ class RelayController {
   final void Function()? onConnected;
   final void Function()? onDisconnected;
   final void Function(Object)? onError;
+  final void Function(String)? onInfo;
   final StreamController<RelayMessage> _incoming =
       StreamController<RelayMessage>.broadcast();
   late final WsClient _ws;
@@ -24,18 +25,22 @@ class RelayController {
       {required this.url,
       this.onConnected,
       this.onDisconnected,
-      this.onError}) {
+      this.onError,
+      this.onInfo}) {
     _ws = WsClient(
       url: url,
       onMessage: (m) => _incoming.add(m),
       onConnected: () => onConnected?.call(),
       onDisconnected: () => onDisconnected?.call(),
       onError: (e) => onError?.call(e),
+      onInfo: (m) => onInfo?.call(m),
     );
   }
 
   Stream<RelayMessage> get messages => _incoming.stream;
   bool get connected => _ws.connected;
+  // 实际使用的地址(已规整: http->ws、必要时补 /ws)
+  String get effectiveUrl => _ws.effectiveUrl;
 
   void connect({required String room, required String pwd, required RelayRole role}) {
     this.role = role;
@@ -70,8 +75,9 @@ class RelayController {
       _ws.send(msgSerialConfig(cfg, mode, agg));
 
   // 链接端把完整串口参数(含聚合)回传共享端, 服务器转发时带 from='link'
-  void sendSerialConfigLink(SerialConfig cfg, AggConfig agg) => _ws.send(
-      RelayMessage('serial-config', {'mode': 'serial', 'cfg': cfg.toJson(), 'agg': agg.toJson()}));
+  // mode: 链接端已知的共享通道类型(serial 时带 cfg, TCP 时仅同步聚合)
+  void sendSerialConfigLink(SerialConfig cfg, AggConfig agg, SerialChannelMode mode) =>
+      _ws.send(msgSerialConfigLink(cfg, agg, mode));
 
   void sendBye() => _ws.send(msgBye());
 

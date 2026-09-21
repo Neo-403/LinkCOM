@@ -1,15 +1,15 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import '../../state/relay_session.dart';
 import '../../serial/serial_config.dart';
 
 // 终端视图: 显示控制 + 显示区域 + 发送区 (对齐 Web 端 terminal-head / send-bar)
 // 第一行: 左 显示模式/时间戳/编码/聚合/缓冲 ; 右 自动滚动/暂停
-// 显示区域: 接收/发送统计在框内右上角; 右键(桌面)/长按(手机)呼出 清空/历史
+// 显示区域: 接收/发送统计在框内右上角; 右键(桌面)/长按(手机)呼出 复制/清空/历史
 // 下方: 发送区 (高度可拖拽; 右侧 发送/HEX/加\r\n; 竖屏换到第二行)
 class TerminalView extends StatefulWidget {
   final SerialConfig cfg; // 编码来源
@@ -180,16 +180,28 @@ class _TerminalViewState extends State<TerminalView> {
       children: [
         // 第一行: 显示控制(左) + 自动滚动/暂停(右)
         LayoutBuilder(builder: (ctx, cons) {
+          // 窄屏(手机): 编码/聚合/缓冲整体缩小, 避免这一行控件过高过宽
+          final compact = cons.maxWidth <= 460;
+          // 编码/聚合/缓冲 绑成一个整体, 避免"缓冲"在窄宽度下被单独挤到第二行
+          final encFields = Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _encDropdown(compact),
+              SizedBox(width: compact ? 3 : 6),
+              _numField('聚合', 'ms', _flushCtl, _applyAgg, compact),
+              SizedBox(width: compact ? 3 : 6),
+              _numField('缓冲', 'KB', _bufCtl, _applyAgg, compact),
+            ],
+          );
           final controls = Wrap(
-            spacing: 6,
-            runSpacing: 4,
+            spacing: compact ? 3 : 6,  // 宽屏: 6
+            runSpacing: compact ? 2 : 4,  // 宽屏: 4
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              _modeToggle(sess),
-              _toggle('时间戳', sess.logShowTs, (v) => sess.logShowTs = v),
-              _encDropdown(),
-              _numField('聚合', 'ms', _flushCtl, _applyAgg),
-              _numField('缓冲', 'KB', _bufCtl, _applyAgg),
+              _modeToggle(sess, height: _compactH),
+              _toggle('时间戳', sess.logShowTs, (v) => sess.logShowTs = v,
+                  height: _compactH),
+              encFields,
             ],
           );
           final toggles = Wrap(
@@ -197,8 +209,10 @@ class _TerminalViewState extends State<TerminalView> {
             runSpacing: 4,
             crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              _toggle('自动滚动', sess.logAutoScroll, (v) => sess.logAutoScroll = v),
-              _toggle('暂停', sess.paused, (v) => setState(() => sess.paused = v)),
+              _toggle('自动滚动', sess.logAutoScroll,
+                  (v) => sess.logAutoScroll = v, height: _compactH),
+              _toggle('暂停', sess.paused, (v) => setState(() => sess.paused = v),
+                  height: _compactH),
             ],
           );
           // 窄屏(手机): 上下堆叠, 避免显示控制被右侧按钮挤成竖排
@@ -322,14 +336,14 @@ class _TerminalViewState extends State<TerminalView> {
         _toggle(r'\r\n', sess.sendCrlf, (v) => sess.sendCrlf = v),
       ],
     );
-    // 窄屏(竖屏): 单行 —— HEX、加\r\n 在左, 发送在最右
+    // 窄屏(竖屏): 单行 —— HEX、加\r\n 在左, 发送占右侧剩余宽度(比原来更宽, 便于触控)
     final buttonsNarrow = Row(
       children: [
         _toggle('HEX', sess.sendHex, (v) => sess.sendHex = v),
         const SizedBox(width: 6),
         _toggle(r'\r\n', sess.sendCrlf, (v) => sess.sendCrlf = v),
-        const Spacer(),
-        sendBtn(),
+        const SizedBox(width: 8),
+        Expanded(child: sendBtn()),
       ],
     );
     // 发送区下方可拖拽条: 向下拖变高、向上拖变矮(正常直觉)
@@ -378,38 +392,40 @@ class _TerminalViewState extends State<TerminalView> {
             hintText: widget.sendHint ?? '发送内容'),
       ),
     );
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        LayoutBuilder(
-          builder: (ctx, cons) {
-            final wide = cons.maxWidth > 520;
-            // 两个分支用不同 Key, 结构切换时整块替换, 避免复用导致的 InheritedElement 依赖错乱
-            if (wide) {
-              return Row(
-                key: const ValueKey('send-wide'),
+    return LayoutBuilder(
+      builder: (ctx, cons) {
+        final wide = cons.maxWidth > 520;
+        // 两个分支用不同 Key, 结构切换时整块替换, 避免复用导致的 InheritedElement 依赖错乱
+        if (wide) {
+          return Column(
+            key: const ValueKey('send-wide'),
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(child: field),
                   const SizedBox(width: 8),
                   buttonsWide,
                 ],
-              );
-            }
-            return Column(
-              key: const ValueKey('send-narrow'),
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                field,
-                const SizedBox(height: 8),
-                buttonsNarrow,
-              ],
-            );
-          },
-        ),
-        const SizedBox(height: 4),
-        handle, // 拖拽条放在发送框下方
-      ],
+              ),
+              const SizedBox(height: 4),
+              handle, // 宽屏: 拖拽条在整行下方
+            ],
+          );
+        }
+        return Column(
+          key: const ValueKey('send-narrow'),
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            field,
+            const SizedBox(height: 4),
+            handle, // 竖屏: 拖拽条紧贴输入框下方(而非发送按钮下方)
+            const SizedBox(height: 8),
+            buttonsNarrow,
+          ],
+        );
+      },
     );
   }
 
@@ -422,22 +438,63 @@ class _TerminalViewState extends State<TerminalView> {
     // 发送后不自动清空, 便于二次编辑/重发
   }
 
-  // 显示框右键(桌面)/长按(手机)呼出的菜单: 清空 / 导出历史
+  // 显示框右键(桌面)/长按(手机)呼出的菜单: 复制 / 清空 / 导出历史
   void _showDisplayMenu(Offset pos, RelaySession sess, int shown) {
     showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(pos.dx, pos.dy, pos.dx, pos.dy),
       items: const [
+        PopupMenuItem(value: 'copy', child: Text('复制可见内容')),
+        PopupMenuItem(value: 'copyAll', child: Text('复制全部')),
+        PopupMenuDivider(),
         PopupMenuItem(value: 'clear', child: Text('清空')),
         PopupMenuItem(value: 'export', child: Text('导出历史')),
       ],
     ).then((v) {
-      if (v == 'clear') {
+      if (v == 'copy') {
+        _copyLogs(sess, shown, all: false);
+      } else if (v == 'copyAll') {
+        _copyLogs(sess, shown, all: true);
+      } else if (v == 'clear') {
         sess.clearLogs();
       } else if (v == 'export') {
         _exportHistory(sess, shown);
       }
     });
+  }
+
+  // 显示内容的纯文本(与导出格式一致): [时间戳] [方向] 文本 [HEX]
+  String _plainText(RelaySession sess, int from, int to) {
+    final sb = StringBuffer();
+    for (var i = from; i < to; i++) {
+      final e = sess.logs[i];
+      final ts = sess.logShowTs ? '${_ts(e.ts)} ' : '';
+      final hex =
+          (sess.logShowHex && e.bytes != null) ? ' HEX: ${_hex(e.bytes!)}' : '';
+      sb.writeln('$ts[${e.dir}] ${e.text}$hex');
+    }
+    return sb.toString();
+  }
+
+  // 长按/右键菜单复制: all=true 复制全部日志, 否则复制当前显示(最近 3000 行)的内容
+  Future<void> _copyLogs(RelaySession sess, int shown,
+      {required bool all}) async {
+    final start = all ? 0 : (shown > 3000 ? shown - 3000 : 0);
+    final text = _plainText(sess, start, shown);
+    if (text.trim().isEmpty) {
+      _toast('没有可复制的内容');
+      return;
+    }
+    await Clipboard.setData(ClipboardData(text: text));
+    _toast('已复制 ${shown - start} 行');
+  }
+
+  void _toast(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(msg),
+      duration: const Duration(seconds: 2),
+    ));
   }
 
   Future<void> _exportHistory(RelaySession sess, int shown) async {
@@ -494,28 +551,49 @@ class _TerminalViewState extends State<TerminalView> {
   }
 
   // 按标题文字宽度计算最小宽度(与串口配置下拉一致): 框宽刚好够显示标题+箭头, 内容长了由 IntrinsicWidth 自动扩展
-  double _labelMinWidth(String label) {
+  double _labelMinWidth(String label, [bool compact = false]) {
     final tp = TextPainter(
-      text: TextSpan(text: label, style: const TextStyle(fontSize: 14)),
+      text: TextSpan(text: label, style: TextStyle(fontSize: compact ? 14 : 14)),
       textDirection: TextDirection.ltr,
     )..layout();
-    return tp.width + 40;
+    return tp.width + (compact ? 16 : 40);
   }
 
   // 编码下拉: 与串口配置(波特率等)一致 — 名称 labelText 浮在框上, 框内显示值
-  Widget _encDropdown() => IntrinsicWidth(
+  // compact(手机): 字号/内边距/箭头整体缩小
+  // 定高统一下拉/输入框: 下拉框(DropdownButtonFormField)自然高度比 TextField 大(含箭头),
+  // 若不强制等高会出现 编码 比 聚合/缓冲 高一截。这里对两种模式都强制同一高度, 保证三者等高。
+  // 高度需 >= 下拉框自然高度, 否则下拉框会溢出而文本框被压矮, 导致不等高。
+  static const double _compactH = 40;
+
+  Widget _encDropdown(bool compact) {
+    final c = Theme.of(context).colorScheme;
+    final field = IntrinsicWidth(
         child: ConstrainedBox(
-          constraints: BoxConstraints(minWidth: _labelMinWidth('编码')),
+          constraints: BoxConstraints(minWidth: _labelMinWidth('编码', compact)),
           child: DropdownButtonFormField<String>(
             isExpanded: false,
             isDense: true,
-            decoration: const InputDecoration(labelText: '编码', isDense: true),
+            iconSize: compact ? 16 : 24,
+            dropdownColor: c.surface,
+            style: TextStyle(fontSize: compact ? 14 : 14, color: c.onSurface),
+            decoration: InputDecoration(
+              isDense: true,
+              labelText: '编码',
+              labelStyle:
+                  TextStyle(fontSize: compact ? 14 : 14, color: c.onSurface),
+              // 与左侧胶囊(_compactH)严格等高(不用浮动 label + 加垂直内边距撑到 _compactH)
+              contentPadding: const EdgeInsets.fromLTRB(8, 12, 4, 12),
+            ),
             value: _enc.any((e) => e.$1 == widget.cfg.encoding)
                 ? widget.cfg.encoding
                 : _enc.first.$1,
             items: _enc
                 .map((e) => DropdownMenuItem(
-                    value: e.$1, child: Text(e.$2, style: const TextStyle(fontSize: 12))))
+                    value: e.$1,
+                    child: Text(e.$2,
+                        style: TextStyle(
+                            fontSize: compact ? 11 : 12, color: c.onSurface))))
                 .toList(),
             onChanged: (v) {
               if (v != null) widget.onConfigChanged(widget.cfg.copyWith(encoding: v), _agg);
@@ -523,25 +601,36 @@ class _TerminalViewState extends State<TerminalView> {
           ),
         ),
       );
+    return SizedBox(height: _compactH, child: field);
+  }
 
   // 聚合/缓冲输入框: 与波特率下拉一致 — 名称 labelText 浮在框上, 框内显示值, 单位作后缀
   Widget _numField(String label, String unit, TextEditingController ctl,
-      void Function() onApply) =>
-      IntrinsicWidth(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(minWidth: _labelMinWidth(label)),
-          child: TextField(
-            controller: ctl,
-            keyboardType: TextInputType.number,
-            onSubmitted: (_) => onApply(),
-            decoration: InputDecoration(
-              labelText: label,
-              isDense: true,
-              suffixText: unit,
-            ),
+      void Function() onApply, bool compact, {double height = _compactH}) {
+    final c = Theme.of(context).colorScheme;
+    final field = IntrinsicWidth(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minWidth: _labelMinWidth(label, compact)),
+        child: TextField(
+          controller: ctl,
+          keyboardType: TextInputType.number,
+          style: TextStyle(fontSize: compact ? 16 : 16),
+          onSubmitted: (_) => onApply(),
+          decoration: InputDecoration(
+            isDense: true,
+            labelText: label,
+            labelStyle:
+                TextStyle(fontSize: compact ? 14 : 14, color: c.onSurface),
+            suffixText: unit,
+            suffixStyle: compact ? const TextStyle(fontSize: 10) : null,
+            // 与编码下拉一致: 名称 labelText 浮在框上; 垂直内边距撑到 _compactH 等高
+            contentPadding: const EdgeInsets.fromLTRB(8, 12, 8, 12),
           ),
         ),
-      );
+      ),
+    );
+    return SizedBox(height: height, child: field);
+  }
 
   Widget _stat(String label, String value, ColorScheme c) => Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -553,26 +642,51 @@ class _TerminalViewState extends State<TerminalView> {
             style: TextStyle(fontSize: 11, fontFamily: 'monospace', color: c.onSurface)),
       );
 
-  Widget _toggle(String label, bool value, void Function(bool) onChanged) => FilterChip(
-        label: Text(label, style: const TextStyle(fontSize: 11)),
-        selected: value,
-        // showCheckmark: false, // 选中不显示勾选图标, 保持宽度稳定
-        onSelected: onChanged,
-        visualDensity: VisualDensity.compact,
-        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      );
+  // 统一「颜色激活」胶囊: 固定高度, 不显示 √; 激活=绿色填充+绿描边, 未激活=仅描边。
+  // 固定高度(_compactH)可与 编码/聚合/缓冲 输入框严格等高, 避免窄屏高低不齐。
+  Widget _pill(String label, bool active, VoidCallback onTap,
+      {double height = 32}) {
+    final c = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        height: height,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: BoxDecoration(
+          color:
+              active ? Colors.green.withValues(alpha: 0.18) : Colors.transparent,
+          border: Border.all(
+              color: active
+                  ? Colors.green.shade600
+                  : c.outline.withValues(alpha: 0.5)),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        // widthFactor:1.0 => 宽度贴合文字(不撑满整行); heightFactor 不设 => 撑满 height 并垂直居中
+        child: Center(
+          widthFactor: 1.0,
+          child: Text(label,
+              style: TextStyle(
+                  fontSize: 12,
+                  color: active ? Colors.green.shade700 : c.onSurface)),
+        ),
+      ),
+    );
+  }
+
+  Widget _toggle(String label, bool value, void Function(bool) onChanged,
+          {double height = 32}) =>
+      _pill(label, value, () => onChanged(!value), height: height);
 
   // 文本/HEX 合并为单一控件: 点击循环切换 文本 -> HEX -> 双显
-  Widget _modeToggle(RelaySession sess) {
+  Widget _modeToggle(RelaySession sess, {double height = 32}) {
     const labels = {LogMode.text: '文本', LogMode.hex: 'HEX', LogMode.both: '双显'};
     final m = sess.logMode;
-    return ActionChip(
-      label: Text('${labels[m]}', style: const TextStyle(fontSize: 11)),
-      visualDensity: VisualDensity.compact,
-      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-      onPressed: () =>
-          sess.logMode = LogMode.values[(m.index + 1) % LogMode.values.length],
-    );
+    return _pill(
+        labels[m]!,
+        false,
+        () => sess.logMode = LogMode.values[(m.index + 1) % LogMode.values.length],
+        height: height);
   }
 
   Widget _line(LogEntry e, RelaySession sess, ColorScheme c) {

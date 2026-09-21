@@ -6,7 +6,7 @@ import 'usb_serial_port.dart';
 import 'win32_serial_port.dart';
 import 'bt_serial_port.dart';
 
-enum SerialBackend { usb, bluetooth }
+enum SerialBackend { usb, bluetooth, tcp }
 
 class SerialPortInfo {
   final String id;
@@ -33,6 +33,11 @@ abstract class SerialPort {
   Future<void> write(Uint8List bytes);
 }
 
+// 通道状态文本流 (TCP 服务器上报「客户端接入/断开」等); 串口后端不实现
+abstract class ChannelLogSource {
+  Stream<String> get logs;
+}
+
 // 统一串口服务接口
 abstract class SerialService {
   // 枚举可用串口 (USB 设备 / 已配对蓝牙)
@@ -47,9 +52,13 @@ abstract class SerialService {
 // Windows 的 USB 串口表现为 COMx, 走 serial_port_win32; 安卓走 usb_serial(OTG)
 // 注: 当前静态导入 win32_serial_port (Windows-only FFI); 安卓端构建时改为条件导入即可
 SerialService createSerialService(SerialBackend backend) {
-  if (backend == SerialBackend.usb) {
-    if (Platform.isWindows) return Win32SerialService();
-    return UsbSerialService();
+  switch (backend) {
+    case SerialBackend.usb:
+      return Platform.isWindows ? Win32SerialService() : UsbSerialService();
+    case SerialBackend.bluetooth:
+      return BtSerialService();
+    case SerialBackend.tcp:
+      // TCP 不走 SerialService(无枚举/无串口参数), 由 createTcpPort() 直接构造
+      throw UnsupportedError('TCP 通道请使用 createTcpPort()');
   }
-  return BtSerialService();
 }

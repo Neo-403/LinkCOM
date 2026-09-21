@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'widgets/active_toggle.dart';
 
 String _uid() => DateTime.now().microsecondsSinceEpoch.toRadixString(36);
 
@@ -324,14 +325,14 @@ class _QuickSendPanelState extends State<QuickSendPanel> {
                     ? const ButtonStyle(
                         visualDensity: VisualDensity.compact,
                         padding: WidgetStatePropertyAll(
-                            EdgeInsets.symmetric(horizontal: 10)),
+                            EdgeInsets.symmetric(horizontal: 8)),
                         textStyle:
                             WidgetStatePropertyAll(TextStyle(fontSize: 12)),
                       )
                     : null;
                 final left = Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
+                  spacing: 4,
+                  runSpacing: 2,
                   children: [
                     FilledButton.tonalIcon(
                         style: cs,
@@ -347,8 +348,8 @@ class _QuickSendPanelState extends State<QuickSendPanel> {
                   ],
                 );
                 final right = Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
+                  spacing: 4,
+                  runSpacing: 2,
                   alignment: WrapAlignment.end,
                   children: [
                     TextButton(style: cs, onPressed: _export, child: const Text('导出')),
@@ -414,16 +415,12 @@ class _QuickSendPanelState extends State<QuickSendPanel> {
       padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         children: [
-          SizedBox(
-            width: 28,
-            child: Checkbox(
-              value: it.checked,
-              visualDensity: VisualDensity.compact,
-              onChanged: (v) {
-                setState(() => it.checked = v ?? false);
-                _save();
-              },
-            ),
+          ActiveToggle(
+            active: it.checked,
+            onChanged: (v) {
+              setState(() => it.checked = v);
+              _save();
+            },
           ),
           Expanded(
             child: Column(
@@ -590,16 +587,18 @@ class _QuickEditorState extends State<_QuickEditor> {
                   labelText: _hex ? '数据 (HEX, 如 AA BB CC)' : '数据 (文本)'),
             ),
             const SizedBox(height: 8),
-            CheckboxListTile(
+            SwitchListTile(
               value: _hex,
-              onChanged: (v) => setState(() => _hex = v ?? false),
+              activeColor: Colors.green,
+              onChanged: (v) => setState(() => _hex = v),
               title: const Text('HEX 发送'),
               dense: true,
               contentPadding: EdgeInsets.zero,
             ),
-            CheckboxListTile(
+            SwitchListTile(
               value: _crlf,
-              onChanged: (v) => setState(() => _crlf = v ?? false),
+              activeColor: Colors.green,
+              onChanged: (v) => setState(() => _crlf = v),
               title: const Text('文本末尾追加 \\r\\n'),
               dense: true,
               contentPadding: EdgeInsets.zero,

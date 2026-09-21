@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../net/relay_controller.dart';
+import '../net/ws_client.dart' show normalizeServerUrl;
 import '../models/relay_message.dart';
 import '../serial/serial_config.dart';
 
@@ -205,6 +206,7 @@ class RelaySession extends ChangeNotifier {
         // 仅服务器探测: 不显示失败日志, 仅反映 wsConnected 状态
         if (_autoJoin) _logRelayError(e);
       },
+      onInfo: (m) => addLog('系统', m),
     );
     _relaySub = relay!.messages.listen(_onRelay);
     relay!.connect(room: '', pwd: '', role: RelayRole.link); // 仅建 WS, 不 join 房间
@@ -235,6 +237,7 @@ class RelaySession extends ChangeNotifier {
           notifyListeners();
         },
         onError: (e) => _logRelayError(e),
+        onInfo: (m) => addLog('系统', m),
       );
       _relaySub = relay!.messages.listen(_onRelay);
     }
@@ -247,7 +250,8 @@ class RelaySession extends ChangeNotifier {
     } else {
       relay!.connect(room: room, pwd: pwd, role: role);
     }
-    addLog('系统', '连接中继: $url (房间 $room, 角色 ${role.name})');
+    addLog('系统',
+        '连接中继: ${normalizeServerUrl(url)} (房间 $room, 角色 ${role.name})');
   }
 
   void disconnect() {
@@ -309,7 +313,7 @@ class RelaySession extends ChangeNotifier {
         sharePortOpen = m.portOpen ?? sharePortOpen;
         break;
       case 'serial-config':
-        // 链接端接收共享端下发的串口参数(共享端收到链接端回传由 ShareScreen 负责)
+        // 链接端接收共享端下发的串口参数 + 通道类型(共享端收到链接端回传由 ShareScreen 负责)
         if (role == RelayRole.link && m.from == 'share') {
           try {
             if (m.cfg != null) _cfg = SerialConfig.fromJson(m.cfg!);
@@ -317,6 +321,14 @@ class RelaySession extends ChangeNotifier {
           } catch (e) {
             addLog('错误', '解析串口配置失败: $e');
           }
+          // 共享端为 TCP 时不会下发 cfg, 只有 mode; 据此切换链接端的参数面板
+          final cm = switch (m.mode) {
+            'tcpClient' => SerialChannelMode.tcpClient,
+            'tcpServer' => SerialChannelMode.tcpServer,
+            'serial' => SerialChannelMode.serial,
+            _ => null,
+          };
+          if (cm != null) _channelMode = cm;
           if (m.portOpen != null) sharePortOpen = m.portOpen!;
         }
         break;
@@ -374,10 +386,19 @@ class RelaySession extends ChangeNotifier {
     _putJson(keys.cfg, cfg.toJson());
     _putJson(keys.agg, agg.toJson());
     if (role == RelayRole.share && joined) {
-      relay?.sendSerialConfig(cfg, SerialChannelMode.serial, agg);
+      relay?.sendSerialConfig(cfg, channelMode, agg);
     } else if (role == RelayRole.link && joined) {
-      relay?.sendSerialConfigLink(cfg, agg);
+      relay?.sendSerialConfigLink(cfg, agg, channelMode);
     }
+  }
+
+  // 共享端当前通道类型(串口 / TCP 客户端 / TCP 服务器); 链接端保存共享端下发的类型
+  SerialChannelMode _channelMode = SerialChannelMode.serial;
+  SerialChannelMode get channelMode => _channelMode;
+  void setChannelMode(SerialChannelMode m) {
+    if (_channelMode == m) return;
+    _channelMode = m;
+    notifyListeners();
   }
 
   Future<void> _put(String k, Object v) async {

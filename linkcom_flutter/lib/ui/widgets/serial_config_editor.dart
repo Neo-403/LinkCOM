@@ -114,10 +114,16 @@ class _SerialConfigEditorState extends State<SerialConfigEditor> {
           constraints: BoxConstraints(minWidth: _labelMinWidth(label)),
           child: DropdownButtonFormField<T>(
             isExpanded: false,
+            dropdownColor: Theme.of(context).colorScheme.surface,
             decoration: InputDecoration(labelText: label, isDense: true),
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
             value: items.contains(value) ? value : items.first,
             items: items
-                .map((v) => DropdownMenuItem(value: v, child: Text('$v')))
+                .map((v) => DropdownMenuItem(
+                    value: v,
+                    child: Text('$v',
+                        style: TextStyle(
+                            color: Theme.of(context).colorScheme.onSurface))))
                 .toList(),
             onChanged: en
                 ? (v) {
@@ -131,15 +137,21 @@ class _SerialConfigEditorState extends State<SerialConfigEditor> {
   Widget _str(String label, String value, List<(String, String)> items, bool en,
       void Function(String) onChanged) {
     final v = items.any((e) => e.$1 == value) ? value : items.first.$1;
-    return IntrinsicWidth(
+    return       IntrinsicWidth(
       child: ConstrainedBox(
         constraints: BoxConstraints(minWidth: _labelMinWidth(label)),
         child: DropdownButtonFormField<String>(
           isExpanded: false,
+          dropdownColor: Theme.of(context).colorScheme.surface,
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurface),
           decoration: InputDecoration(labelText: label, isDense: true),
           value: v,
           items: items
-              .map((e) => DropdownMenuItem(value: e.$1, child: Text(e.$1)))
+              .map((e) => DropdownMenuItem(
+                  value: e.$1,
+                  child: Text(e.$1,
+                      style: TextStyle(
+                          color: Theme.of(context).colorScheme.onSurface))))
               .toList(),
           onChanged: en
               ? (x) {

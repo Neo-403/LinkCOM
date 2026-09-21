@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../codec/codec_util.dart';
 import '../models/relay_message.dart';
+import '../serial/channel_config.dart';
 import '../state/relay_session.dart';
 import '../sniffer/sniffer_controller.dart';
 import '../ui/widgets/serial_config_editor.dart';
@@ -62,9 +63,13 @@ class _LinkScreenState extends State<LinkScreen> {
       final bytes = base64Decode(m.buf!);
       final text = decodeBytes(bytes, sess.cfg.encoding);
       // 共享端主动发送(kind='tx')显示为「共享端发送」, 通道回执(串口收到的数据)显示为「←接收」(与 Web 链接端一致)
-      final dir = m.kind == 'tx' ? '共享端发送' : '←接收';
+      final isTx = m.kind == 'tx';
+      final dir = isTx ? '共享端发送' : '←接收';
       sess.addLog(dir, text.replaceAll('\n', '⏎').replaceAll('\r', ''), bytes: bytes);
-      context.read<SnifferController>().feed(bytes, false, sess.cfg.encoding);
+      // 嗅探方向与 Web link.js 一致: 共享端主动发送(kind='tx', 即 stx)算「发送」方向, 通道回执(rx)算「接收」
+      if (!sess.paused) {
+        context.read<SnifferController>().feed(bytes, isTx, sess.cfg.encoding);
+      }
     }
   }
 
@@ -83,7 +88,22 @@ class _LinkScreenState extends State<LinkScreen> {
     // 服务器转发给共享端写串口
     sess.relay?.sendSerialData(bytes);
     sess.addLog('Link_发送', text, bytes: bytes);
-    context.read<SnifferController>().feed(bytes, true, sess.cfg.encoding);
+    if (!sess.paused) {
+      context.read<SnifferController>().feed(bytes, true, sess.cfg.encoding);
+    }
+  }
+
+  // 房间配置面板右上角摘要: 窄屏(手机)精简为关键状态, 宽屏保留完整说明
+  String _summary(RelaySession sess) {
+    final room = _roomCtl.text.trim();
+    if (MediaQuery.sizeOf(context).width <= 600) {
+      final share = !_relayOn ? '离线' : (sess.sharePortOpen ? '在线' : '串口未开');
+      return '${!sess.wsConnected ? '未连' : (_relayOn ? '已连房间' : '已连服务器')}'
+          '${room.isEmpty ? '' : ' · $room'} · 共享端$share';
+    }
+    return '${!sess.wsConnected ? '未连接服务器' : (_relayOn ? '已连接房间' : '已连服务器')}'
+        ' · 房间: ${room.isEmpty ? '-' : room}'
+        ' · 共享端: ${!_relayOn ? '离线' : (sess.sharePortOpen ? '在线' : '串口未打开')}';
   }
 
   @override
@@ -93,15 +113,14 @@ class _LinkScreenState extends State<LinkScreen> {
     // 同共享端: 避免 ListView 双窗格语义(useTwoPaneSemantics)与 Tooltip 嫁接冲突
     // 导致的 Windows AXTree 报错 (flutter#182444)
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
         // 与 Web 链接端一致: 房间(中继)配置 + 串口参数合并为一个「房间配置」折叠面板
         CollapsiblePanel(
           title: '房间配置',
-          summary:
-              '${!sess.wsConnected ? '未连接服务器' : (_relayOn ? '已连接房间' : '已连服务器')} · 房间: ${_roomCtl.text.trim().isNotEmpty ? _roomCtl.text.trim() : '-'} · 共享端: ${!_relayOn ? '离线' : (sess.sharePortOpen ? '在线' : '串口未打开')}',
+          summary: _summary(sess),
           collapseWhen: sess.wsConnected,
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -132,9 +151,15 @@ class _LinkScreenState extends State<LinkScreen> {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      roomField,
-                      const SizedBox(height: 8),
-                      pwdField,
+                      // 窄屏: 房间码 + 密码 同一行
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(child: roomField),
+                          const SizedBox(width: 8),
+                          Expanded(child: pwdField),
+                        ],
+                      ),
                       const SizedBox(height: 8),
                       Align(alignment: Alignment.centerRight, child: connBtn),
                     ],
@@ -152,11 +177,24 @@ class _LinkScreenState extends State<LinkScreen> {
                 );
               }),
               const SizedBox(height: 8),
-              SerialConfigEditor(
-                initialCfg: sess.cfg,
-                initialAgg: sess.agg,
-                onApply: (cfg, agg) => sess.updateConfig(cfg, agg),
-              ),
+              // 共享端为 TCP 时不同步 COM 参数(与 Web 链接端 updateShareModeUI 一致)
+              if (sess.channelMode == SerialChannelMode.serial)
+                SerialConfigEditor(
+                  initialCfg: sess.cfg,
+                  initialAgg: sess.agg,
+                  onApply: (cfg, agg) => sess.updateConfig(cfg, agg),
+                )
+              else
+                Text(
+                  '共享端通道: ${shareChannelFromRelayMode(sess.channelMode.name)?.label ?? sess.channelMode.name}'
+                  '（无串口参数, 仅同步聚合）',
+                  style: TextStyle(
+                      fontSize: 11,
+                      color: Theme.of(context)
+                          .colorScheme
+                          .onSurface
+                          .withValues(alpha: 0.6)),
+                ),
             ],
           ),
         ),
@@ -197,7 +235,7 @@ class _LinkScreenState extends State<LinkScreen> {
     sess.relay?.sendSerialData(bytes);
     // 记录实际发送的内容(而非条目名称)
     sess.addLog('Link_发送', it.data, bytes: bytes);
-    sniffer.feed(bytes, true, sess.cfg.encoding);
+    if (!sess.paused) sniffer.feed(bytes, true, sess.cfg.encoding);
     return true;
   }
 

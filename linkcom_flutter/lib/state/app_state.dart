@@ -3,6 +3,8 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../background/bg_service.dart';
+import '../net/deep_link.dart';
+import '../serial/channel_config.dart';
 import '../sniffer/sniffer_controller.dart';
 import 'relay_session.dart';
 
@@ -25,6 +27,16 @@ class AppState extends ChangeNotifier {
     // 地址变更后让两端各自刷新连接状态
     shareSession.onServerUrlChanged();
     linkSession.onServerUrlChanged();
+  }
+
+  // 深链指定的共享端通道, 由 ShareScreen 消费一次
+  // (带通知: 深链可能晚于共享端首帧到达, 靠 notifyListeners 让共享端能响应)
+  ShareChannel? _pendingShareChannel;
+  ShareChannel? get pendingShareChannel => _pendingShareChannel;
+  set pendingShareChannel(ShareChannel? v) {
+    if (_pendingShareChannel == v) return;
+    _pendingShareChannel = v;
+    notifyListeners();
   }
 
   // 中继服务器地址历史(最近 5 个, 持久化)
@@ -87,7 +99,32 @@ class AppState extends ChangeNotifier {
     // 前台保活由两个板块共同决定: 任一在共享/连接即保持, 全部断开才停止
     shareSession.addListener(_syncKeepAlive);
     linkSession.addListener(_syncKeepAlive);
-    _loadPrefs();
+    ready = _loadPrefs();
+  }
+
+  /// prefs / 双端会话 / 嗅探器 加载完成。
+  /// 需要「覆盖」持久化值的场景(如深链)必须先 await 它, 否则会被异步载入的旧值盖回去。
+  late final Future<void> ready;
+
+  /// 深链请求切换的板块 (0=共享端, 1=链接端), 由 Home 消费
+  int? pendingTab;
+
+  /// 应用深链: 覆盖服务器/房间/密码, 记录目标板块与共享通道
+  void applyDeepLink(DeepLink d) {
+    final server = d.server;
+    if (server != null && server.isNotEmpty) serverUrl = server;
+    if (d.isLink) {
+      if (d.room != null) linkSession.room = d.room!;
+      if (d.pwd != null) linkSession.pwd = d.pwd!;
+      pendingTab = 1;
+    } else {
+      if (d.room != null) shareSession.room = d.room!;
+      if (d.pwd != null) shareSession.pwd = d.pwd!;
+      final ch = d.shareChannel;
+      if (ch != null) pendingShareChannel = ch;
+      pendingTab = 0;
+    }
+    notifyListeners();
   }
 
   bool _keepAliveOn = false;

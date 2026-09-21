@@ -1,8 +1,11 @@
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:provider/provider.dart';
 import 'version.dart';
+import 'net/deep_link.dart';
 import 'state/app_state.dart';
 import 'sniffer/sniffer_controller.dart';
 import 'background/bg_service.dart';
@@ -11,21 +14,32 @@ import 'ui/share_screen.dart';
 import 'ui/link_screen.dart';
 import 'ui/settings_screen.dart';
 
-void main() {
+Future<void> main(List<String> args) async {
   // 必须在 AppState 构造里读取 SharedPreferences 之前初始化绑定, 否则 _loadPrefs 会静默失败
   WidgetsFlutterBinding.ensureInitialized();
   // Android 前台服务保活(非 Android 平台内部直接返回, 不影响 Windows)
   unawaited(initializeBackgroundService());
+  // 全局状态(服务器地址/历史/主题) + 两端各自的会话与嗅探器(AppState 内持有)
+  final app = AppState();
+  // 等持久化值载入完成再应用深链: 否则深链写入的服务器地址/房间码会被异步载入的旧值覆盖
+  await app.ready;
+  final link = _argDeepLink(args);
+  if (link != null) app.applyDeepLink(link);
   runApp(
     MultiProvider(
-      providers: [
-        // 全局状态(服务器地址/历史/主题) + 两端各自的会话与嗅探器(AppState 内持有),
-        // 会话/嗅探器在共享端/链接端各自 Provider 注入, 见 Home。
-        ChangeNotifierProvider(create: (_) => AppState()),
-      ],
+      providers: [ChangeNotifierProvider.value(value: app)],
       child: const MyApp(),
     ),
   );
+}
+
+// 从命令行参数里找出第一个 linkcom:// 深链
+DeepLink? _argDeepLink(List<String> args) {
+  for (final a in args) {
+    final d = parseDeepLink(a);
+    if (d != null) return d;
+  }
+  return null;
 }
 
 class MyApp extends StatelessWidget {
@@ -63,8 +77,51 @@ class _HomeState extends State<Home> {
   int _idx = 0;
   bool _userExpanded = true;
   bool _userToggled = false;
+  static const _deepLinkChannel = MethodChannel('linkcom/deeplink');
   static const _navIcons = [Icons.usb, Icons.link, Icons.settings];
   static const _navLabels = ['共享端', '链接端', '设置'];
+  late final AppState _app = context.read<AppState>();
+
+  @override
+  void initState() {
+    super.initState();
+    // 深链(桌面启动参数 / 安卓 intent)统一走 AppState.applyDeepLink,
+    // 这里监听它请求的板块并切换
+    _app.addListener(_onAppChanged);
+    _onAppChanged();
+    if (Platform.isAndroid) unawaited(_watchAndroidDeepLink());
+  }
+
+  @override
+  void dispose() {
+    _app.removeListener(_onAppChanged);
+    super.dispose();
+  }
+
+  // 消费深链请求的目标板块(0=共享端, 1=链接端)
+  void _onAppChanged() {
+    if (!mounted) return;
+    final t = _app.pendingTab;
+    if (t == null) return;
+    _app.pendingTab = null;
+    if (t != _idx) setState(() => _idx = t);
+  }
+
+  // 安卓: 冷启动读取 intent, 热启动(onNewIntent)由原生回调
+  Future<void> _watchAndroidDeepLink() async {
+    try {
+      _deepLinkChannel.setMethodCallHandler((call) async {
+        if (call.method == 'link') {
+          final d = parseDeepLink(call.arguments?.toString() ?? '');
+          if (d != null) _app.applyDeepLink(d);
+        }
+        return null;
+      });
+      final uri = await _deepLinkChannel.invokeMethod<String>('initialLink');
+      final d = uri == null ? null : parseDeepLink(uri);
+      if (d != null) _app.applyDeepLink(d);
+    } catch (_) {}
+  }
   // 宽屏(>=720)用可折叠侧栏; 窄屏(手机)改为隐藏式抽屉: 平时不占任何横向空间,
   // 从屏幕左缘向右滑(Scaffold 自带手势)或点左上角菜单键打开。
   static const _wideBreakpoint = 720.0;
