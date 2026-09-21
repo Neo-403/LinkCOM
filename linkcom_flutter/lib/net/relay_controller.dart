@@ -71,13 +71,16 @@ class RelayController {
   // 链接端加入后向服务器查询当前权威串口状态, 消除漏发/时序导致的不同步
   void sendSerialStateQuery() => _ws.send(msgSerialStateQuery());
 
-  void sendSerialConfig(SerialConfig cfg, SerialChannelMode mode, AggConfig agg) =>
-      _ws.send(msgSerialConfig(cfg, mode, agg));
+  // chan: 共享端物理通道(com/classic/ble), 供链接端区分真串口与蓝牙(仅 serial 模式携带)
+  void sendSerialConfig(SerialConfig cfg, SerialChannelMode mode, AggConfig agg,
+          {String? chan}) =>
+      _ws.send(msgSerialConfig(cfg, mode, agg, chan: chan));
 
-  // 链接端把完整串口参数(含聚合)回传共享端, 服务器转发时带 from='link'
-  // mode: 链接端已知的共享通道类型(serial 时带 cfg, TCP 时仅同步聚合)
-  void sendSerialConfigLink(SerialConfig cfg, AggConfig agg, SerialChannelMode mode) =>
-      _ws.send(msgSerialConfigLink(cfg, agg, mode));
+  // 链接端回传配置给共享端, 服务器转发时带 from='link'
+  // withCfg 仅当共享端是真串口(COM)时为 true; 否则只同步聚合参数
+  void sendSerialConfigLink(SerialConfig cfg, AggConfig agg, SerialChannelMode mode,
+          {bool withCfg = false}) =>
+      _ws.send(msgSerialConfigLink(cfg, agg, mode, withCfg: withCfg));
 
   void sendBye() => _ws.send(msgBye());
 

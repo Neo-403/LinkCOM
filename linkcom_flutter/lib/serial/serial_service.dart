@@ -5,8 +5,9 @@ import 'serial_config.dart';
 import 'usb_serial_port.dart';
 import 'win32_serial_port.dart';
 import 'bt_serial_port.dart';
+import 'ble_serial_port.dart';
 
-enum SerialBackend { usb, bluetooth, tcp }
+enum SerialBackend { usb, bluetooth, ble, tcp }
 
 class SerialPortInfo {
   final String id;
@@ -57,6 +58,8 @@ SerialService createSerialService(SerialBackend backend) {
       return Platform.isWindows ? Win32SerialService() : UsbSerialService();
     case SerialBackend.bluetooth:
       return BtSerialService();
+    case SerialBackend.ble:
+      return BleSerialService();
     case SerialBackend.tcp:
       // TCP 不走 SerialService(无枚举/无串口参数), 由 createTcpPort() 直接构造
       throw UnsupportedError('TCP 通道请使用 createTcpPort()');

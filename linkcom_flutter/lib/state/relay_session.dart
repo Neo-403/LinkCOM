@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../net/relay_controller.dart';
 import '../net/ws_client.dart' show normalizeServerUrl;
 import '../models/relay_message.dart';
+import '../serial/channel_config.dart';
 import '../serial/serial_config.dart';
 
 // 单条日志(共享端/链接端各持一套, 互不干扰)
@@ -329,6 +330,9 @@ class RelaySession extends ChangeNotifier {
             _ => null,
           };
           if (cm != null) _channelMode = cm;
+          // 共享端物理通道(com/classic/ble): 链接端据此标识"共享端协议"并决定是否
+          // 显示/回传 COM 参数; 旧版共享端不带 chan → 按真串口处理
+          _shareChan = shareChanFromName(m.chan);
           if (m.portOpen != null) sharePortOpen = m.portOpen!;
         }
         break;
@@ -386,16 +390,28 @@ class RelaySession extends ChangeNotifier {
     _putJson(keys.cfg, cfg.toJson());
     _putJson(keys.agg, agg.toJson());
     if (role == RelayRole.share && joined) {
-      relay?.sendSerialConfig(cfg, channelMode, agg);
+      relay?.sendSerialConfig(cfg, channelMode, agg, chan: _chanName);
     } else if (role == RelayRole.link && joined) {
-      relay?.sendSerialConfigLink(cfg, agg, channelMode);
+      // 下发收紧: 只有共享端是真串口(COM)时才回传 COM 参数 —— 蓝牙/TCP 上这些参数无效,
+      // 回传默认值(如 9600)反而会覆盖共享端本机设置并触发它重开串口
+      relay?.sendSerialConfigLink(cfg, agg, channelMode,
+          withCfg: channelMode == SerialChannelMode.serial &&
+              _shareChan == ShareChannel.com);
     }
   }
 
   // 共享端当前通道类型(串口 / TCP 客户端 / TCP 服务器); 链接端保存共享端下发的类型
   SerialChannelMode _channelMode = SerialChannelMode.serial;
   SerialChannelMode get channelMode => _channelMode;
-  void setChannelMode(SerialChannelMode m) {
+  // 共享端**物理通道**(COM / 经典蓝牙 / BLE): 共享端上报, 链接端据此标识共享端协议,
+  // 并决定是否显示/回传 COM 参数(只有真串口才有意义)
+  ShareChannel _shareChan = ShareChannel.com;
+  ShareChannel get shareChan => _shareChan;
+  // 本端作为共享端时的物理通道名(com/classic/ble), 随 serial-config 一起下发给链接端
+  String? _chanName;
+  void setChannelMode(SerialChannelMode m, {String? chan}) {
+    // 只有串口类通道(真串口/经典蓝牙/BLE)才有"物理通道"概念
+    if (m == SerialChannelMode.serial) _chanName = chan;
     if (_channelMode == m) return;
     _channelMode = m;
     notifyListeners();

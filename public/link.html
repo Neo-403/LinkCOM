@@ -52,9 +52,9 @@
           <div class="cfg-edit">
             <span class="cfg-item"><b id="shareProto" style="font-size:13px;color:var(--accent-2)">未知</b></span>
           </div>
-          <div class="hint" id="cfgComNote" style="display:none;color:var(--muted)">共享端为网络模式, 不显示串口参数 (仅可同步聚合参数)</div>
         </div>
-        <div class="field cfg-field cfg-com" style="flex:1; min-width:200px">
+        <!-- COM 参数默认隐藏: 只有共享端确实是传统串口(COM)时才显示, 见 link.js updateShareModeUI -->
+        <div class="field cfg-field cfg-com" style="flex:1; min-width:200px; display:none">
           <label>共享端串口参数 (可修改)</label>
           <div class="cfg-edit">
             <span class="cfg-item"><label>波特率</label>

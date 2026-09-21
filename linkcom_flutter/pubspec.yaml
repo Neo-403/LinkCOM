@@ -1,7 +1,7 @@
 name: linkcom
 description: "LinkCOM - 跨平台串口共享调试工具 (Windows / Android)"
 publish_to: 'none' # 私有包, 不发布到 pub.dev
-version: 1.0.3+1
+version: 1.0.4+1
 environment:
   sdk: ^3.11.3
 
@@ -31,6 +31,7 @@ dependencies:
   shared_preferences: ^2.5.0   # 配置/选项本地持久化
   file_picker: ^13.1.0   # 导出历史自选保存位置(系统保存对话框)
   url_launcher: ^6.3.1   # 设置页一键打开 GitHub 等项目主页
+  flutter_blue_plus: ^2.3.12
 
 dev_dependencies:
   flutter_test:

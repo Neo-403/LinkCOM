@@ -167,7 +167,7 @@ wss.on('connection', (ws) => {
           room.links.add(ws);
           // 若已有串口参数, 立即推给新加入的链接端 (解决后加入看不到配置的问题)
           // from:'share' 是必须的: 链接端据此识别是共享端下发并应用
-          if (room.cfg) send(ws, { t: 'serial-config', cfg: room.cfg.cfg, mode: room.cfg.mode, agg: room.cfg.agg, portOpen: !!room.sharePortOpen, from: 'share' });
+          if (room.cfg) send(ws, { t: 'serial-config', cfg: room.cfg.cfg, mode: room.cfg.mode, chan: room.cfg.chan, agg: room.cfg.agg, portOpen: !!room.sharePortOpen, from: 'share' });
         }
 
         ws.meta = { roomId, role };
@@ -219,11 +219,12 @@ wss.on('connection', (ws) => {
         const room = rooms.get(roomId);
         if (!room) return;
         if (role === 'share') {
-          // 共享端主动变更: 通知所有链接端并缓存 (含 mode/agg)
-          room.cfg = { cfg: msg.cfg, mode: msg.mode, agg: msg.agg };
+          // 共享端主动变更: 通知所有链接端并缓存 (含 mode/chan/agg)
+          // chan = 共享端物理通道(com/classic/ble), 链接端据此标识协议并决定是否显示 COM 参数
+          room.cfg = { cfg: msg.cfg, mode: msg.mode, chan: msg.chan, agg: msg.agg };
           // 完整配置可能一并携带最新串口状态
           if (typeof msg.portOpen === 'boolean') room.sharePortOpen = msg.portOpen;
-          room.links.forEach((l) => send(l, { t: 'serial-config', cfg: msg.cfg, mode: msg.mode, agg: msg.agg, portOpen: room.sharePortOpen, from: 'share' }));
+          room.links.forEach((l) => send(l, { t: 'serial-config', cfg: msg.cfg, mode: msg.mode, chan: msg.chan, agg: msg.agg, portOpen: room.sharePortOpen, from: 'share' }));
         } else if (role === 'link') {
           // 链接端请求修改参数: 转发给共享端 (由其重设串口/聚合)
           if (room.share) send(room.share, { t: 'serial-config', cfg: msg.cfg, mode: msg.mode, agg: msg.agg, from: 'link' });

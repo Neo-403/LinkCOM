@@ -56,11 +56,13 @@ class BluetoothConnection {
   }
 
   /// Returns connection to given address.
-  static Future<BluetoothConnection> toAddress(String? address) async {
+  /// [insecure] = true 时用非安全 RFCOMM: 不要求系统配对, 可直连未配对的经典 SPP 设备。
+  static Future<BluetoothConnection> toAddress(String? address,
+      {bool insecure = false}) async {
     // Sorry for pseudo-factory, but `factory` keyword disallows `Future`.
     return BluetoothConnection._consumeConnectionID(await FlutterBluetoothSerial
         ._methodChannel
-        .invokeMethod('connect', {"address": address}));
+        .invokeMethod('connect', {"address": address, "insecure": insecure}));
   }
 
   /// Should be called to make sure the connection is closed and resources are freed (sockets/channels).

@@ -1,6 +1,6 @@
 {
   "name": "linkcom",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "LinkCOM - Web 串口共享与远程调试工具 (WebSocket 转发)",
   "main": "server.js",
   "scripts": {

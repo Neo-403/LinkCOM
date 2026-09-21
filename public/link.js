@@ -8,6 +8,7 @@
   let shareOnline = false;           // 共享端是否在线 (WebSocket 已连且在房间内)
   let sharePortOpen = false;         // 共享端串口是否已打开 (可发送的前提之一)
   let shareMode = 'serial';          // 共享端通道类型: serial | tcpClient | tcpServer
+  let shareChan = 'com';             // 共享端物理通道(仅 serial 模式): com | classic | ble
   let room = '';
   let paused = false;
   let rxBytes = 0, txBytes = 0;
@@ -191,41 +192,51 @@
     div.appendChild(document.createTextNode('[系统] ' + text));
     term.appendChild(div);
   }
-  // 把共享端下发的串口参数填充到可编辑表单
+  // 把共享端下发的参数填充到本地表单 (COM 参数元素仅在共享端是真串口时才显示)
   function applyRemoteCfg(cfg) {
     if (!cfg) return;
-    if (cfg.baudRate != null) $('cfgBaud').value = String(cfg.baudRate);
-    if (cfg.dataBits != null) $('cfgData').value = String(cfg.dataBits);
-    if (cfg.stopBits != null) $('cfgStop').value = String(cfg.stopBits);
-    if (cfg.parity) $('cfgParity').value = cfg.parity;
-    if (cfg.flowControl) $('cfgFlow').value = cfg.flowControl;
-    if (cfg.encoding) { enc = cfg.encoding; $('cfgEnc').value = cfg.encoding; $('encoding').value = cfg.encoding; }
+    const set = (id, v) => { const el = $(id); if (el && v != null) el.value = String(v); };
+    set('cfgBaud', cfg.baudRate);
+    set('cfgData', cfg.dataBits);
+    set('cfgStop', cfg.stopBits);
+    set('cfgParity', cfg.parity);
+    set('cfgFlow', cfg.flowControl);
+    if (cfg.encoding) {
+      enc = cfg.encoding;
+      set('cfgEnc', cfg.encoding);
+      set('encoding', cfg.encoding);
+    }
     rerender();
   }
-  // 根据共享端通道类型调整链接端配置面板: TCP 模式隐藏 COM 配置并显示协议名
-  function updateShareModeUI(mode) {
+  // 更新"共享端协议"标识: mode 区分 TCP, chan(共享端物理通道) 区分 真串口/经典蓝牙/BLE。
+  // COM 参数默认隐藏, 只有共享端确实是传统串口(COM)时才显示 —— 蓝牙/BLE/TCP 链路上
+  // 不存在波特率等参数, 显示出来只会误导。
+  function updateShareModeUI(mode, chan) {
     shareMode = mode || 'serial';
-    const isSerial = shareMode === 'serial';
-    const labels = { serial: '串口 (COM)', tcpClient: 'TCP 客户端', tcpServer: 'TCP 服务器' };
-    const protoName = labels[shareMode] || shareMode;
+    if (shareMode === 'serial') shareChan = chan || 'com';
+    let protoName;
+    if (shareMode === 'tcpClient') protoName = 'TCP 客户端';
+    else if (shareMode === 'tcpServer') protoName = 'TCP 服务器';
+    else if (shareChan === 'classic') protoName = '经典蓝牙 SPP';
+    else if (shareChan === 'ble') protoName = 'BLE (GATT)';
+    else protoName = '串口 COM';
     const protoEl = $('shareProto');
     if (protoEl) protoEl.textContent = protoName;
-    // 隐藏/显示 COM 相关配置项
-    document.querySelectorAll('.cfg-com').forEach((el) => { el.style.display = isSerial ? '' : 'none'; });
-    const comNote = $('cfgComNote');
-    if (comNote) comNote.style.display = isSerial ? 'none' : '';
+    const isCom = shareMode === 'serial' && shareChan === 'com';
+    document.querySelectorAll('.cfg-com').forEach((el) => { el.style.display = isCom ? '' : 'none'; });
   }
-  // 把链接端修改后的参数(含聚合参数)回传给服务器 (再转发给共享端)
+  // 把链接端修改后的参数回传给服务器 (再转发给共享端)
+  // 下发收紧: 只有共享端确实是传统串口(COM)时才回传 COM 参数 —— 蓝牙/BLE/TCP 上这些
+  // 参数无效, 回传默认值还会覆盖共享端本机设置并触发它重开串口; 其它情况只同步聚合参数。
   function sendCfgToShare() {
     if (!joined || !wsOpen) { setHint('未连接房间, 无法应用配置', true); return; }
-    // 聚合参数无论何种模式都下发, 使共享端按链接端设定的聚合工作
     const agg = {
       flushMs: parseInt($('cfgFlushMs').value, 10) || 0,
       maxBufKb: parseInt($('cfgMaxBuf').value, 10) || 1,
     };
-    let msg = { t: 'serial-config', agg, mode: shareMode };
-    // 仅串口模式同步 COM 参数
-    if (shareMode === 'serial') {
+    const msg = { t: 'serial-config', agg, mode: shareMode };
+    const isCom = shareMode === 'serial' && shareChan === 'com';
+    if (isCom) {
       msg.cfg = {
         baudRate: parseInt($('cfgBaud').value, 10),
         dataBits: parseInt($('cfgData').value, 10),
@@ -236,10 +247,11 @@
       };
     }
     ws.send(JSON.stringify(msg));
-    $('cfgHint').textContent = '已发送配置到共享端';
-    appendSys(shareMode === 'serial'
+    const h = $('cfgHint');
+    if (h) h.textContent = '已发送配置到共享端';
+    appendSys(isCom
       ? `已请求修改串口参数: ${msg.cfg.baudRate}/${msg.cfg.dataBits}/${msg.cfg.stopBits}/${msg.cfg.parity}/${msg.cfg.flowControl}/${msg.cfg.encoding.toUpperCase()}`
-      : `已请求修改聚合参数(共享端为${shareMode === 'tcpClient' ? 'TCP 客户端' : 'TCP 服务器'}, 仅同步聚合): ${agg.flushMs}ms / ${agg.maxBufKb}KB`,
+      : `已请求修改聚合参数: ${agg.flushMs}ms / ${agg.maxBufKb}KB`,
       'sys');
   }
 
@@ -304,7 +316,7 @@
         break;
       case 'serial-config':
         if (m.from === 'share') {
-          if (m.mode) updateShareModeUI(m.mode);
+          if (m.mode) updateShareModeUI(m.mode, m.chan);
           if (m.cfg) applyRemoteCfg(m.cfg);
           if (m.agg) {
             $('cfgFlushMs').value = m.agg.flushMs;

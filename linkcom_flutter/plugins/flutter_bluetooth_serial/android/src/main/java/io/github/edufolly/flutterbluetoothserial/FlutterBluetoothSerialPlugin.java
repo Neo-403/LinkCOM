@@ -1041,15 +1041,24 @@ public class FlutterBluetoothSerialPlugin implements FlutterPlugin, ActivityAwar
                         break;
                     }
 
+                    // insecure: 非安全 RFCOMM(免系统配对, 可直连未配对设备); 默认 false
+                    boolean insecure = false;
+                    try {
+                        Boolean insecureArg = call.argument("insecure");
+                        insecure = (insecureArg != null && insecureArg);
+                    } catch (Exception ignored) {
+                    }
+                    final boolean insecureFinal = insecure;
+
                     int id = ++lastConnectionId;
                     BluetoothConnectionWrapper connection = new BluetoothConnectionWrapper(id, bluetoothAdapter);
                     connections.put(id, connection);
 
-                    Log.d(TAG, "Connecting to " + address + " (id: " + id + ")");
+                    Log.d(TAG, "Connecting to " + address + " (insecure: " + insecureFinal + ", id: " + id + ")");
 
                     AsyncTask.execute(() -> {
                         try {
-                            connection.connect(address);
+                            connection.connect(address, BluetoothConnection.DEFAULT_UUID, insecureFinal);
                             activity.runOnUiThread(() -> result.success(id));
                         } catch (Exception ex) {
                             activity.runOnUiThread(() -> result.error("connect_error", ex.getMessage(), exceptionToString(ex)));

@@ -35,7 +35,9 @@ class _ShareScreenState extends State<ShareScreen> {
   // 通道类型: COM(串口) / BLE(蓝牙) / TCP 客户端 / TCP 服务器
   ShareChannel _channel = ShareChannel.com;
   late SerialService _svc = createSerialService(_backend);
-  List<SerialPortInfo> _ports = [];
+  List<SerialPortInfo> _ports = []; // 界面实际展示的列表(可能已过滤)
+  List<SerialPortInfo> _allPorts = []; // listDevices 的完整结果(BLE 过滤前)
+  bool _showPaired = false; // BLE: 是否显示"已配对但未广播(可能不在附近)"的设备
   SerialPortInfo? _selected;
   SerialPort? _port;
   // TCP 参数 (输入框; 打开通道时读取)
@@ -49,7 +51,8 @@ class _ShareScreenState extends State<ShareScreen> {
   // 选项配置自动保存/加载: 上次使用的通道/串口/TCP 参数, 重启后自动恢复
   static const _kBackend = 'shareBackend';
   static const _kPortId = 'sharePortId';
-  static const _kChannel = 'shareChannel';
+  static const _kChannel = 'shareChannel'; // 旧键(语义已变)
+  static const _kChannelV2 = 'shareChannel2';
   static const _kTcpClient = 'shareTcpClient';
   static const _kTcpServer = 'shareTcpServer';
   String? _savedPortId;
@@ -60,20 +63,24 @@ class _ShareScreenState extends State<ShareScreen> {
   StreamSubscription<SerialState>? _stateSub; // 串口状态(异常时自动停止发送)
   StreamSubscription<String>? _logSub; // TCP 通道状态文本
   bool _relayOn = false;
+  bool _opening = false; // 防重入: 连点「打开」会多次 connect 去抢同一个蓝牙设备
   final _rxBuf = BytesBuilder(); // 接收聚合缓冲, 避免连续数据重建风暴
   Timer? _rxTimer;
 
   RelaySession get _sess => context.read<RelaySession>();
 
-  // 串口后端由通道类型推导 (BLE -> 蓝牙 SPP; COM -> Windows COMx / 安卓 USB-OTG)
-  SerialBackend get _backend => _channel == ShareChannel.ble
-      ? SerialBackend.bluetooth
-      : SerialBackend.usb;
+  // 设备后端由通道类型推导 (经典蓝牙 -> SPP, BLE -> GATT, 其余 -> 串口 COM/USB)
+  SerialBackend get _backend => switch (_channel) {
+        ShareChannel.classic => SerialBackend.bluetooth,
+        ShareChannel.ble => SerialBackend.ble,
+        _ => SerialBackend.usb,
+      };
 
-  // 桌面端三段(COM/TCP 客户端/TCP 服务器); 移动端四段(蓝牙与 COM 拆开)
+  // 桌面端三段(COM/TCP 客户端/TCP 服务器); 移动端五段(多出 经典蓝牙 / BLE)
   List<ShareChannel> _channelSegments() => Platform.isAndroid
       ? const [
           ShareChannel.com,
+          ShareChannel.classic,
           ShareChannel.ble,
           ShareChannel.tcpClient,
           ShareChannel.tcpServer,
@@ -83,6 +90,10 @@ class _ShareScreenState extends State<ShareScreen> {
           ShareChannel.tcpClient,
           ShareChannel.tcpServer,
         ];
+
+  // 窄屏(手机)统一控件高度: 5 段按钮文案会换行, 需要更高的按钮, 其余按钮一并加高
+  bool get _phone => MediaQuery.sizeOf(context).width < 720;
+  double get _ctlH => _phone ? 48 : 40;
 
   TcpClientConfig _tcpClientCfg() => TcpClientConfig(
         localIp: _tcLocalIp.trim(),
@@ -105,6 +116,14 @@ class _ShareScreenState extends State<ShareScreen> {
     _restorePortChoice();
   }
 
+  // 旧版 shareChannel 值 -> 新版通道
+  static String? _legacyChannel(String? old) => switch (old) {
+        'ble' => ShareChannel.classic.name, // 旧版 ble = 经典蓝牙 SPP
+        'usb' => ShareChannel.com.name,
+        null => null,
+        _ => old,
+      };
+
   // 恢复上次的通道/串口/TCP 参数, 再枚举设备并自动选中
   Future<void> _restorePortChoice() async {
     // 网卡枚举单独 try: 即便失败也不影响其余配置的恢复(否则下拉里一个 IP 都没有)
@@ -115,7 +134,8 @@ class _ShareScreenState extends State<ShareScreen> {
     try {
       final p = await SharedPreferences.getInstance();
       final b = p.getString(_kBackend);
-      final ch = p.getString(_kChannel);
+      // 新版键优先; 旧键里 'ble' 当时表示「经典蓝牙 SPP」, 语义与新版不同
+      final ch = p.getString(_kChannelV2) ?? _legacyChannel(p.getString(_kChannel));
       final tc = p.getString(_kTcpClient);
       final ts = p.getString(_kTcpServer);
       _savedPortId = p.getString(_kPortId);
@@ -173,7 +193,7 @@ class _ShareScreenState extends State<ShareScreen> {
   Future<void> _persistPortChoice() async {
     try {
       final p = await SharedPreferences.getInstance();
-      await p.setString(_kChannel, _channel.name);
+      await p.setString(_kChannelV2, _channel.name);
       await p.setString(_kBackend, _backend.name);
       final id = _selected?.id ?? _savedPortId;
       if (id == null) {
@@ -187,19 +207,17 @@ class _ShareScreenState extends State<ShareScreen> {
     } catch (_) {}
   }
 
-  // 切换通道类型(通道已打开时禁止); 串口类通道需重新枚举设备
+  // 切换通道类型(通道已打开时禁止); 需要设备列表的通道要重建服务并重新枚举/扫描
   void _switchChannel(ShareChannel ch) {
     if (_port != null || ch == _channel) return;
     setState(() {
       _channel = ch;
-      if (ch.isSerial) {
-        _svc = createSerialService(_backend);
-        _ports = [];
-        _selected = null;
-      }
+      _svc = createSerialService(_backend);
+      _ports = [];
+      _selected = null;
     });
     unawaited(_persistPortChoice());
-    if (ch.isSerial) {
+    if (ch.needsPicker) {
       _refresh();
     } else if (_localIps.isEmpty) {
       // 进入 TCP 通道时补一次网卡枚举(换网/首次启动可能拿不到)
@@ -207,27 +225,58 @@ class _ShareScreenState extends State<ShareScreen> {
     }
   }
 
+  // BLE: 默认隐藏"已配对但未广播"的设备(它们多半不在附近, 会把列表塞满);
+  // 其它通道或打开了开关则全量展示。不重新扫描, 切换开关是瞬时的。
+  void _applyPortFilter() {
+    _ports = (_channel.isBle && !_showPaired)
+        ? _allPorts.where((p) => p.raw['pairedSilent'] != true).toList()
+        : List<SerialPortInfo>.of(_allPorts);
+    // 选中的设备被过滤掉时必须清空, 否则 DropdownButton 的 value 匹配不到 item 会断言
+    if (_selected != null && !_ports.any((p) => p.id == _selected!.id)) {
+      _selected = null;
+    }
+  }
+
   Future<void> _refresh() async {
     final sess = _sess;
     try {
-      final list = await _svc.listDevices();
+      final raw = await _svc.listDevices();
       if (!mounted) return;
       setState(() {
-        _ports = list;
-        // 自动选中上次使用的串口(仍存在时)
+        _allPorts = raw;
+        _applyPortFilter();
+        // 自动选中上次使用的设备(仍存在时)
         if (_selected == null && _savedPortId != null) {
-          for (final p in list) {
+          for (final p in _ports) {
             if (p.id == _savedPortId) {
               _selected = p;
               break;
             }
           }
+          // 上次的设备恰好被"已配对过滤"挡住: 自动打开开关, 保证能恢复
+          if (_selected == null && !_showPaired &&
+              _allPorts.any((p) => p.id == _savedPortId)) {
+            _showPaired = true;
+            _applyPortFilter();
+            _selected = _ports.firstWhere((p) => p.id == _savedPortId);
+          }
         }
       });
-      if (_selected != null) sess.addLog('系统', '已恢复上次串口: ${_selected!.name}');
-      sess.addLog('系统', '枚举到 ${list.length} 个串口');
+      if (_selected != null) {
+        sess.addLog('系统', '已恢复上次${_channel.isBle ? '设备' : '串口'}: ${_selected!.name}');
+      }
+      final hidden = _allPorts.length - _ports.length;
+      sess.addLog('系统',
+          _channel.isBle ? '扫描到 ${_allPorts.length} 个 BLE 设备' : '枚举到 ${_allPorts.length} 个串口');
+      if (_channel.isBle && hidden > 0) {
+        sess.addLog('系统', '已隐藏 $hidden 个已配对(未广播)设备, 点右侧漏斗图标可显示');
+      }
+      if (_channel.isBle && _allPorts.isEmpty) {
+        sess.addLog('系统', '提示: 若一直是 0, 请确认手机蓝牙已开、附近有 BLE 设备; '
+            '安卓 11 及以下还需打开「定位」才能扫到 BLE');
+      }
     } catch (e) {
-      sess.addLog('系统', '枚举串口失败: $e');
+      sess.addLog('错误', '${_channel.isBle ? 'BLE 扫描' : '枚举串口'}失败: $e');
     }
   }
 
@@ -316,6 +365,8 @@ class _ShareScreenState extends State<ShareScreen> {
   }
 
   Future<void> _open() async {
+    if (_opening) return; // 正在打开中, 忽略重复点击
+    _opening = true;
     final sess = _sess;
     final cfg = sess.cfg;
     unawaited(_persistPortChoice());
@@ -332,6 +383,8 @@ class _ShareScreenState extends State<ShareScreen> {
       _attachPort(p, cfg);
     } catch (e) {
       sess.addLog('系统', '打开失败: $e');
+    } finally {
+      _opening = false;
     }
   }
 
@@ -355,9 +408,10 @@ class _ShareScreenState extends State<ShareScreen> {
     }
     sess.addLog(
         '系统',
-        _channel.isSerial
+        // 只有真正的串口才打印波特率(蓝牙链路上波特率无效, 打印出来会误导)
+        _channel == ShareChannel.com
             ? '串口已打开: ${_selected!.name} @${cfg.baudRate}'
-            : '${_channel.label}通道已打开');
+            : '${_channel.label}通道已打开: ${_selected?.name ?? '-'}');
     // 通知链接端通道状态 + 当前参数/通道类型
     sess.relay?.sendSerialState(true);
     _syncRelayConfig();
@@ -367,7 +421,7 @@ class _ShareScreenState extends State<ShareScreen> {
   void _syncRelayConfig() {
     final sess = _sess;
     final mode = _channel.relayMode;
-    sess.setChannelMode(mode);
+    sess.setChannelMode(mode, chan: _channel.name);
     // TCP 模式下不下发 COM 参数(与 Web 端一致: 仅 serial 带 cfg)
     sess.relay?.sendSerialConfig(sess.cfg, mode, sess.agg);
   }
@@ -536,12 +590,14 @@ class _ShareScreenState extends State<ShareScreen> {
   Widget _channelOpenBtn(ColorScheme c, {bool compact = false}) =>
       _port == null
           ? ElevatedButton(
-              style: compact
-                  ? ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 10),
-                      visualDensity: VisualDensity.compact,
-                      tapTargetSize: MaterialTapTargetSize.shrinkWrap)
-                  : null,
+              style: ElevatedButton.styleFrom(
+                padding:
+                    compact ? const EdgeInsets.symmetric(horizontal: 10) : null,
+                visualDensity: compact ? VisualDensity.compact : null,
+                tapTargetSize:
+                    compact ? MaterialTapTargetSize.shrinkWrap : null,
+                minimumSize: Size(0, _ctlH),
+              ),
               onPressed: _open,
               child: const Text('打开通道'))
           : OutlinedButton(
@@ -554,6 +610,7 @@ class _ShareScreenState extends State<ShareScreen> {
                 visualDensity: compact ? VisualDensity.compact : null,
                 tapTargetSize:
                     compact ? MaterialTapTargetSize.shrinkWrap : null,
+                minimumSize: Size(0, _ctlH),
               ),
               child: const Text('关闭通道'));
 
@@ -691,8 +748,14 @@ class _ShareScreenState extends State<ShareScreen> {
               SegmentedButton<ShareChannel>(
                 expandedInsets: EdgeInsets.zero,
                 segments: [
+                  // 窄屏 5 段: 字号收小 + 允许两行居中, 否则 "TCP 客户端" 会被截断
                   for (final ch in _channelSegments())
-                    ButtonSegment(value: ch, label: Text(ch.shortLabel)),
+                    ButtonSegment(
+                        value: ch,
+                        label: Text(ch.shortLabel,
+                            maxLines: 2,
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(fontSize: 11))),
                 ],
                 selected: {_channel},
                 onSelectionChanged: _port == null
@@ -702,8 +765,8 @@ class _ShareScreenState extends State<ShareScreen> {
                 style: const ButtonStyle(visualDensity: VisualDensity.compact),
               ),
               const SizedBox(height: 8),
-              // 选择串口 + 打开/关闭串口 + 刷新 (仅串口通道; 宽/窄屏都同一行, 窄屏按钮紧凑化)
-              if (_channel.isSerial)
+              // 选择设备 + 打开/关闭 + 刷新/扫描 (串口 & 经典蓝牙 & BLE; 窄屏按钮紧凑化)
+              if (_channel.needsPicker)
                 LayoutBuilder(builder: (ctx, cons) {
                 final narrow = cons.maxWidth <= 460;
                 final btnPad = narrow
@@ -711,9 +774,11 @@ class _ShareScreenState extends State<ShareScreen> {
                     : null;
                 final btnDensity = narrow ? VisualDensity.compact : null;
                 final btnTap = narrow ? MaterialTapTargetSize.shrinkWrap : null;
+                final ble = _channel.isBle;
+                final minSize = Size(0, _ctlH);
                 final picker = DropdownButton<String>(
                   isExpanded: true,
-                  hint: const Text('选择串口'),
+                  hint: Text(ble ? '选择 BLE 设备' : '选择串口'),
                   value: selId,
                   items: _ports
                       .map((p) => DropdownMenuItem(value: p.id, child: Text(p.name)))
@@ -730,9 +795,10 @@ class _ShareScreenState extends State<ShareScreen> {
                           padding: btnPad,
                           visualDensity: btnDensity,
                           tapTargetSize: btnTap,
+                          minimumSize: minSize,
                         ),
                         onPressed: _open,
-                        child: const Text('打开串口'))
+                        child: Text(ble ? '连接' : '打开串口'))
                     : OutlinedButton(
                         onPressed: _close,
                         style: OutlinedButton.styleFrom(
@@ -741,16 +807,18 @@ class _ShareScreenState extends State<ShareScreen> {
                           padding: btnPad,
                           visualDensity: btnDensity,
                           tapTargetSize: btnTap,
+                          minimumSize: minSize,
                         ),
-                        child: const Text('关闭串口'));
+                        child: Text(ble ? '断开' : '关闭串口'));
                 final refreshBtn = ElevatedButton(
                     style: ElevatedButton.styleFrom(
                       padding: btnPad,
                       visualDensity: btnDensity,
                       tapTargetSize: btnTap,
+                      minimumSize: minSize,
                     ),
                     onPressed: _refresh,
-                    child: const Text('刷新'));
+                    child: Text(ble ? '扫描' : '刷新'));
                 return Row(
                   crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
@@ -759,10 +827,30 @@ class _ShareScreenState extends State<ShareScreen> {
                     openBtn,
                     const SizedBox(width: 8),
                     refreshBtn,
+                    // BLE: 切换是否显示"已配对但未广播"的设备(默认隐藏, 见 _applyPortFilter)
+                    if (ble)
+                      IconButton(
+                        tooltip: _showPaired ? '隐藏已配对(未广播)设备' : '显示已配对(未广播)设备',
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints:
+                            const BoxConstraints(minWidth: 32, minHeight: 32),
+                        iconSize: 18,
+                        color: _showPaired ? c.primary : null,
+                        icon: Icon(
+                            _showPaired ? Icons.filter_alt : Icons.filter_alt_off),
+                        onPressed: () => setState(() {
+                          _showPaired = !_showPaired;
+                          _applyPortFilter();
+                        }),
+                      ),
                   ],
                 );
               }),
-              if (_channel.isSerial) ...[
+              // COM 物理参数(波特率/数据位/停止位/校验/流控)只对真正的串口通道有意义:
+              // 经典蓝牙(SPP)/BLE 链路上不存在这些参数(波特率由模块自身 UART 决定), 故不显示。
+              // 编码/聚合/缓冲 仍在下方终端工具条里(见 TerminalView)。
+              if (_channel.usesComParams) ...[
                 const SizedBox(height: 8),
                 SerialConfigEditor(
                   initialCfg: sess.cfg,
@@ -773,7 +861,7 @@ class _ShareScreenState extends State<ShareScreen> {
                   },
                 ),
               ],
-              if (!_channel.isSerial) _tcpPanel(c),
+              if (_channel.isTcp) _tcpPanel(c),
               const Divider(),
               // 房间码 / 密码 / 开始共享 (宽屏同一行, 窄屏上下堆叠)
               LayoutBuilder(builder: (ctx, cons) {
@@ -793,15 +881,21 @@ class _ShareScreenState extends State<ShareScreen> {
                         style: OutlinedButton.styleFrom(
                           foregroundColor: c.error,
                           side: BorderSide(color: c.error),
+                          minimumSize: Size(0, _ctlH),
                         ),
                         child: const Text('停止共享'))
                     : ElevatedButton(
-                        onPressed: _connectRelay, child: const Text('开始共享'));
+                        style: ElevatedButton.styleFrom(
+                            minimumSize: Size(0, _ctlH)),
+                        onPressed: _connectRelay,
+                        child: const Text('开始共享'));
                 // 共享中: 在共享按钮左侧额外显示「一键分享」(分享图标)
                 final Widget? shareBtn = _relayOn
                     ? IconButton(
                         tooltip: '一键分享房间链接',
                         icon: const Icon(Icons.share_outlined),
+                        constraints: BoxConstraints(
+                            minWidth: _ctlH, minHeight: _ctlH),
                         onPressed: () => unawaited(_shareLink()),
                       )
                     : null;

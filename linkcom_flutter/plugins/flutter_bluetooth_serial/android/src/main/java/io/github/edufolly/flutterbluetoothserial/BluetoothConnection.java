@@ -37,6 +37,14 @@ public abstract class BluetoothConnection
     // @TODO ? how about turning it into factoried?
     /// Connects to given device by hardware address
     public void connect(String address, UUID uuid) throws IOException {
+        connect(address, uuid, false);
+    }
+
+    /// Connects to given device by hardware address.
+    /// insecure=true 时用 createInsecureRfcommSocketToServiceRecord: 非安全 RFCOMM,
+    /// 不要求系统配对(bond), 可直连未配对的经典 SPP 设备(HC-05/06 等)。
+    /// 注意: connect 失败必须关闭 socket —— 否则半开 socket 泄漏, 会导致后续连接持续失败。
+    public void connect(String address, UUID uuid, boolean insecure) throws IOException {
         if (isConnected()) {
             throw new IOException("already connected");
         }
@@ -46,7 +54,9 @@ public abstract class BluetoothConnection
             throw new IOException("device not found");
         }
 
-        BluetoothSocket socket = device.createRfcommSocketToServiceRecord(uuid); // @TODO . introduce ConnectionMethod
+        BluetoothSocket socket = insecure
+                ? device.createInsecureRfcommSocketToServiceRecord(uuid)
+                : device.createRfcommSocketToServiceRecord(uuid);
         if (socket == null) {
             throw new IOException("socket connection not established");
         }
@@ -54,7 +64,16 @@ public abstract class BluetoothConnection
         // Cancel discovery, even though we didn't start it
         bluetoothAdapter.cancelDiscovery();
 
-        socket.connect();
+        try {
+            socket.connect();
+        } catch (IOException ex) {
+            try {
+                socket.close();
+            } catch (IOException ignored) {
+                // 关闭失败无妨, 继续抛出原始异常
+            }
+            throw ex;
+        }
 
         connectionThread = new ConnectionThread(socket);
         connectionThread.start();

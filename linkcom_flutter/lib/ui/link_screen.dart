@@ -177,24 +177,42 @@ class _LinkScreenState extends State<LinkScreen> {
                 );
               }),
               const SizedBox(height: 8),
-              // 共享端为 TCP 时不同步 COM 参数(与 Web 链接端 updateShareModeUI 一致)
-              if (sess.channelMode == SerialChannelMode.serial)
+              // 共享端协议标识: 让链接端一眼看清对面是 真串口 / 经典蓝牙 / BLE / TCP
+              Row(
+                children: [
+                  Text('共享端协议',
+                      style: TextStyle(
+                          fontSize: 12,
+                          color: c.onSurface.withValues(alpha: 0.6))),
+                  const SizedBox(width: 8),
+                  Container(
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                    decoration: BoxDecoration(
+                      color: c.primary.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(6),
+                    ),
+                    child: Text(
+                        shareChannelLabel(sess.channelMode, sess.shareChan),
+                        style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w600,
+                            color: c.primary)),
+                  ),
+                ],
+              ),
+              // COM 参数默认隐藏: 只有共享端确实是传统串口(COM)时才显示 ——
+              // 经典蓝牙/BLE/TCP 链路上不存在波特率等参数, 显示出来只会误导。
+              // 编码/聚合/缓冲 仍在下方终端工具条中(见 TerminalView)。
+              if (sess.channelMode == SerialChannelMode.serial &&
+                  sess.shareChan == ShareChannel.com) ...[
+                const SizedBox(height: 8),
                 SerialConfigEditor(
                   initialCfg: sess.cfg,
                   initialAgg: sess.agg,
                   onApply: (cfg, agg) => sess.updateConfig(cfg, agg),
-                )
-              else
-                Text(
-                  '共享端通道: ${shareChannelFromRelayMode(sess.channelMode.name)?.label ?? sess.channelMode.name}'
-                  '（无串口参数, 仅同步聚合）',
-                  style: TextStyle(
-                      fontSize: 11,
-                      color: Theme.of(context)
-                          .colorScheme
-                          .onSurface
-                          .withValues(alpha: 0.6)),
                 ),
+              ],
             ],
           ),
         ),

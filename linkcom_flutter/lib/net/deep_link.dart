@@ -16,11 +16,13 @@ class DeepLink {
   // mode=link 表示「打开链接端」
   bool get isLink => mode == 'link';
 
-  // 共享端通道类型 (mode=serial/tcpClient/tcpServer 时)
+  // 共享端通道类型 (mode=serial/classic/ble/tcpClient/tcpServer)
   ShareChannel? get shareChannel => switch (mode) {
         'tcpClient' => ShareChannel.tcpClient,
         'tcpServer' => ShareChannel.tcpServer,
         'serial' => ShareChannel.com,
+        'classic' => ShareChannel.classic,
+        'ble' => ShareChannel.ble,
         _ => null,
       };
 }
