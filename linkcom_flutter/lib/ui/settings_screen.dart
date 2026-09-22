@@ -98,6 +98,24 @@ class _SettingsScreenState extends State<SettingsScreen> {
             ButtonSegment(value: 2, label: Text('黑夜')),
           ],
         ),
+        const Divider(),
+        const Text('串口 / 性能', style: TextStyle(fontWeight: FontWeight.bold)),
+        const SizedBox(height: 4),
+        Text('影响收发及时性与资源占用; 改完即时写入(下次打开端口/读取时应用)',
+            style: TextStyle(
+                fontSize: 12,
+                color: Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.6))),
+        const SizedBox(height: 6),
+        _pickRow('读取轮询间隔', s.readPollMs, ' ms',
+            const [1, 2, 3, 5, 10, 20, 50], (v) => s.readPollMs = v),
+        _pickRow('单次读取超时', s.readTimeoutMs, ' ms',
+            const [5, 10, 15, 25, 50, 100, 200], (v) => s.readTimeoutMs = v),
+        _pickRow('驱动读缓冲', s.rxBufKb, ' KB',
+            const [4, 8, 16, 32, 64, 128, 256, 512], (v) => s.rxBufKb = v),
+        _pickRow('日志最大行数', s.maxLogLines, '',
+            const [1000, 2000, 5000, 10000, 20000], (v) => s.maxLogLines = v),
+        _pickRow('BLE 扫描时长', s.bleScanSec, ' s',
+            const [3, 6, 10, 15, 30], (v) => s.bleScanSec = v),
         const SizedBox(height: 50),
         ElevatedButton.icon(
           icon: const Icon(Icons.open_in_new),
@@ -122,6 +140,36 @@ class _SettingsScreenState extends State<SettingsScreen> {
           },
         ),
       ],
+      ),
+    );
+  }
+
+  // 一行"标签 + 下拉"设置项: 候选值天然合法, 免校验
+  Widget _pickRow(String label, int cur, String unit, List<int> opts,
+      ValueChanged<int> onPick) {
+    final vals = [...opts];
+    if (!vals.contains(cur)) {
+      vals.add(cur);
+      vals.sort();
+    }
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          Expanded(child: Text(label)),
+          DropdownButton<int>(
+            value: cur,
+            isDense: true,
+            borderRadius: BorderRadius.circular(8),
+            items: [
+              for (final v in vals)
+                DropdownMenuItem(value: v, child: Text('$v$unit')),
+            ],
+            onChanged: (v) {
+              if (v != null) onPick(v);
+            },
+          ),
+        ],
       ),
     );
   }

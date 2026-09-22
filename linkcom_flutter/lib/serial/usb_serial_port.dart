@@ -54,6 +54,14 @@ class UsbSerialPort implements SerialPort {
     } else if (cfg.flowControl == FlowControl.software) {
       await _port.setFlowControl(UsbPort.FLOW_CONTROL_XON_XOFF);
     }
+    // DTR/RTS 置位: 与 Windows/浏览器等通用串口工具行为一致(部分设备/485 模块靠 DTR 才输出数据);
+    // 硬件流控下 RTS 由驱动按 CTS 自动控制, 不再手动置位
+    try {
+      await _port.setDTR(true);
+      if (cfg.flowControl != FlowControl.hardware) await _port.setRTS(true);
+    } catch (_) {
+      // 个别设备/驱动不支持置位信号: 忽略
+    }
     final sub = _port.inputStream?.listen((d) => _dataCtrl.add(d));
     if (sub != null) {
       _subs.add(sub);

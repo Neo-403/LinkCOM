@@ -65,3 +65,27 @@ SerialService createSerialService(SerialBackend backend) {
       throw UnsupportedError('TCP 通道请使用 createTcpPort()');
   }
 }
+
+// ---- BLE 手动指定收发特征值(适配各式非标透传模块) ----
+
+/// 一个可选的 BLE 特征值(UI 下拉用)
+class BleCharOption {
+  final String uuid; // 归一化短 UUID(选择/保存用)
+  final String service; // 归一化服务 UUID
+  final bool canWrite;
+  final bool canNotify;
+  const BleCharOption(this.uuid, this.service, this.canWrite, this.canNotify);
+
+  String get label =>
+      '$service/$uuid [${[if (canWrite) '写', if (canNotify) '通知'].join('|')}]';
+}
+
+/// 端口若支持"手动指定收发特征值"则实现本接口(BLE 用)
+abstract class BleCharControl {
+  List<BleCharOption> get charOptions;
+  String? get txUuid; // 当前发送(写)特征值
+  String? get rxUuid; // 当前接收(通知)特征值
+
+  /// 切换收发特征值; auto=true 表示恢复自动挑选。即时生效(不需重连)并记住该设备
+  Future<void> selectChars({String? txUuid, String? rxUuid, bool auto = false});
+}

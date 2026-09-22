@@ -343,7 +343,6 @@
     const flow = $('flow').value;
     if (!(dbits >= 5 && dbits <= 8)) return `数据位 ${dbits} 不被浏览器支持 (仅支持 5~8)`;
     if (!['none', 'odd', 'even'].includes(parity)) return `校验位 ${parity} 不被当前浏览器 Web Serial 支持 (仅支持 None/Odd/Even)`;
-    if (flow === 'software') return `流控 XON/XOFF(软件流控) 不被当前浏览器 Web Serial 支持`;
     return null;
   }
   async function pickPort() {
@@ -361,21 +360,33 @@
     if (!port) { setHint('请先选择 COM 口', true); return; }
     const err = validateSerialOpts();
     if (err) { setHint('无法打开串口: ' + err, true); appendSys('无法打开串口: ' + err, 'err'); return; }
+    // 串口参数: flowControl 支持 none / hardware(RTS/CTS) / software(XON/XOFF)。
+    // 个别浏览器内核对 software 不支持, open() 会抛错 —— 此时自动退回 none 重试一次, 保证仍能打开。
+    const flow = $('flow').value;
+    const openOpts = (fc) => ({
+      baudRate: parseInt($('baud').value, 10),
+      dataBits: parseInt($('dbits').value, 10),
+      stopBits: parseInt($('sbits').value, 10),
+      parity: $('parity').value,
+      flowControl: fc,
+    });
     try {
-      await port.open({
-        baudRate: parseInt($('baud').value, 10),
-        dataBits: parseInt($('dbits').value, 10),
-        stopBits: parseInt($('sbits').value, 10),
-        parity: $('parity').value,
-        flowControl: $('flow').value === 'hardware' ? 'hardware' : undefined,
-      });
+      try {
+        await port.open(openOpts(flow));
+      } catch (e1) {
+        if (flow === 'none') throw e1;
+        appendSys(`该浏览器不支持「${flow === 'hardware' ? 'RTS/CTS 硬件流控' : 'XON/XOFF 软件流控'}」, 已按「无流控」打开`, 'err');
+        await port.open(openOpts('none'));
+      }
+      // 显式置位 DTR/RTS: 部分设备/485 模块靠 DTR 才会输出数据(硬件流控下 RTS 交由驱动按 CTS 控制)
+      try { await port.setSignals({ dataTerminalReady: true, requestToSend: flow !== 'hardware' }); } catch (e) {}
       writer = port.writable.getWriter();
       portOpen = true; keepReading = true; readLoopRunning = false;
       serialBuf = new Uint8Array(0);  // 每次打开串口重置缓冲
       readLoop();
       $('btnOpen').textContent = '关闭串口';
       $('btnOpen').classList.remove('teal');
-      appendSys(`串口已打开 ${$('baud').value} ${$('dbits').value}${$('parity').value[0].toUpperCase()}${$('sbits').value}`);
+      appendSys(`串口已打开 ${$('baud').value} ${$('dbits').value}${$('parity').value[0].toUpperCase()}${$('sbits').value} 流控:${$('flow').value}`);
       // 已共享则通知参数变更 + 串口状态
       if (joined && wsOpen) { sendFullCfg(); sendSerialState(); }
     } catch (e) { setHint('打开串口失败: ' + e.message, true); }

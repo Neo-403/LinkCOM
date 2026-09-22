@@ -245,6 +245,15 @@ class _ShareScreenState extends State<ShareScreen> {
       setState(() {
         _allPorts = raw;
         _applyPortFilter();
+        // BLE: 附近一个都没扫到、但有"已配对(未广播)"的设备(HC-04 这类双模模块配对/连过之后
+        // 就不再广播) → 自动显示出来, 免得用户以为设备没被找到
+        if (_channel.isBle &&
+            !_showPaired &&
+            _ports.isEmpty &&
+            _allPorts.isNotEmpty) {
+          _showPaired = true;
+          _applyPortFilter();
+        }
         // 自动选中上次使用的设备(仍存在时)
         if (_selected == null && _savedPortId != null) {
           for (final p in _ports) {
@@ -368,11 +377,21 @@ class _ShareScreenState extends State<ShareScreen> {
     if (_opening) return; // 正在打开中, 忽略重复点击
     _opening = true;
     final sess = _sess;
-    final cfg = sess.cfg;
+    var cfg = sess.cfg;
+    // 安卓 USB-OTG 底层 CH340/CH341 驱动的数据位/停止位是空实现 → 归一到 8/1,
+    // 让界面显示与实际一致(避免链接端/日志里出现假的 6 位、7 位)
+    if (Platform.isAndroid &&
+        _channel == ShareChannel.com &&
+        (cfg.dataBits != 8 || cfg.stopBits != StopBits.one)) {
+      cfg = cfg.copyWith(dataBits: 8, stopBits: StopBits.one);
+      sess.updateConfig(cfg, sess.agg);
+    }
     unawaited(_persistPortChoice());
     try {
       final SerialPort p;
-      if (_channel.isSerial) {
+      // 需要设备列表的通道(COM / 经典蓝牙 / BLE)都走 SerialService.connect;
+      // 只有 TCP 用 createTcpPort (注意: BLE 不属于 isSerial, 之前误入 TCP 分支)
+      if (_channel.needsPicker) {
         if (_selected == null) return;
         p = await _svc.connect(_selected!, cfg);
       } else {
@@ -399,12 +418,14 @@ class _ShareScreenState extends State<ShareScreen> {
       _rxBuf.add(bytes);
       _rxTimer ??= Timer(Duration(milliseconds: sess.agg.flushMs), _flushRx);
     });
-    // TCP 通道的「已连接 / 客户端接入 / 断开」等状态文本写入日志
+    // 端口自身上报的状态文本 → 日志:
+    //   TCP: 已连接 / 客户端接入 / 断开;  BLE: 服务/特征值清单 + 选中的收发特征值
     _logSub?.cancel();
     _logSub = null;
-    // TCP 端口(TcpPortBase 子类)才会上报状态文本
-    if (p is TcpPortBase) {
-      _logSub = p.logs.listen((s) => sess.addLog('系统', s));
+    if (p is ChannelLogSource) {
+      // 显式转换: SerialPort 与 ChannelLogSource 无继承关系, 不会自动类型提升
+      _logSub =
+          (p as ChannelLogSource).logs.listen((s) => sess.addLog('系统', s));
     }
     sess.addLog(
         '系统',
@@ -416,6 +437,72 @@ class _ShareScreenState extends State<ShareScreen> {
     sess.relay?.sendSerialState(true);
     _syncRelayConfig();
     if (mounted) setState(() {});
+  }
+
+  // BLE 收发特征值手动选择: 非标模块被自动挑错时在这里改(即时生效, 按设备 MAC 记住)
+  Widget _bleCharRow(ColorScheme c) {
+    final ctl = _port as BleCharControl;
+    final opts = ctl.charOptions;
+    if (opts.isEmpty) return const SizedBox.shrink();
+    final txOpts = opts.where((o) => o.canWrite).toList();
+    final rxOpts = opts.where((o) => o.canNotify).toList();
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: Wrap(
+        spacing: 10,
+        runSpacing: 6,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Text('BLE 收发特征值',
+              style: TextStyle(
+                  fontSize: 12, color: c.onSurface.withValues(alpha: 0.6))),
+          _bleCharPick('发送', ctl.txUuid, txOpts,
+              (v) => ctl.selectChars(txUuid: v)),
+          _bleCharPick('接收', ctl.rxUuid, rxOpts,
+              (v) => ctl.selectChars(rxUuid: v)),
+          TextButton(
+            style: TextButton.styleFrom(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: const Size(0, 28),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+            onPressed: () async {
+              await ctl.selectChars(auto: true);
+              if (mounted) setState(() {});
+            },
+            child: const Text('恢复自动', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _bleCharPick(String label, String? cur, List<BleCharOption> opts,
+      Future<void> Function(String) onPick) {
+    final ids = [for (final o in opts) o.uuid];
+    final v = (cur != null && ids.contains(cur)) ? cur : null;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Text('$label ', style: const TextStyle(fontSize: 12)),
+        DropdownButton<String>(
+          value: v,
+          hint: const Text('未选', style: TextStyle(fontSize: 12)),
+          isDense: true,
+          borderRadius: BorderRadius.circular(8),
+          items: [
+            for (final o in opts)
+              DropdownMenuItem(
+                  value: o.uuid,
+                  child: Text(o.label, style: const TextStyle(fontSize: 12))),
+          ],
+          onChanged: (x) async {
+            if (x == null) return;
+            await onPick(x);
+            if (mounted) setState(() {});
+          },
+        ),
+      ],
+    );
   }
 
   void _syncRelayConfig() {
@@ -850,11 +937,16 @@ class _ShareScreenState extends State<ShareScreen> {
               // COM 物理参数(波特率/数据位/停止位/校验/流控)只对真正的串口通道有意义:
               // 经典蓝牙(SPP)/BLE 链路上不存在这些参数(波特率由模块自身 UART 决定), 故不显示。
               // 编码/聚合/缓冲 仍在下方终端工具条里(见 TerminalView)。
+              // BLE: 手动指定收发特征值(适配各式模块; 连上后可用, 即时生效并按设备记住)
+              if (_channel.isBle && _port is BleCharControl) _bleCharRow(c),
               if (_channel.usesComParams) ...[
                 const SizedBox(height: 8),
                 SerialConfigEditor(
                   initialCfg: sess.cfg,
                   initialAgg: sess.agg,
+                  // 安卓 USB-OTG(CH340/CH341) 数据位/停止位改不了 → 那一项置灰并说明
+                  noDataStopBits: Platform.isAndroid &&
+                      _channel == ShareChannel.com,
                   onApply: (cfg, agg) {
                     sess.updateConfig(cfg, agg);
                     if (_port != null) _reopen();
@@ -916,7 +1008,8 @@ class _ShareScreenState extends State<ShareScreen> {
                       // 窄屏(开始共享单独一行): TCP 的「打开/关闭通道」左对齐, 分享+开始共享右对齐
                       Row(
                         children: [
-                          if (!_channel.isSerial)
+                          // 仅 TCP 用这里的「打开/关闭通道」(COM/蓝牙/BLE 打开按钮在设备行里)
+                          if (_channel.isTcp)
                             _channelOpenBtn(c, compact: true),
                           const Spacer(),
                           if (shareBtn != null) shareBtn,

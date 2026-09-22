@@ -41,7 +41,7 @@ extension ShareChannelX on ShareChannel {
   // 分段按钮上的短标签(窄屏 5 段, 越短越好)
   String get shortLabel => switch (this) {
         ShareChannel.com => 'COM',
-        ShareChannel.classic => '经典',
+        ShareChannel.classic => 'SPP',
         ShareChannel.ble => 'BLE',
         ShareChannel.tcpClient => 'TCP 客户端',
         ShareChannel.tcpServer => 'TCP 服务器',

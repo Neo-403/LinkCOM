@@ -7,6 +7,7 @@ import '../net/ws_client.dart' show normalizeServerUrl;
 import '../models/relay_message.dart';
 import '../serial/channel_config.dart';
 import '../serial/serial_config.dart';
+import 'app_tuning.dart';
 
 // 单条日志(共享端/链接端各持一套, 互不干扰)
 class LogEntry {
@@ -364,7 +365,8 @@ class RelaySession extends ChangeNotifier {
       }
     }
     logs.add(LogEntry(DateTime.now(), dir, text, bytes));
-    if (logs.length > 5000) logs.removeAt(0);
+    // 上限可在设置中调整(默认 5000)
+    if (logs.length > AppTuning.maxLogLines) logs.removeAt(0);
     notifyListeners();
   }
 

@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'app_tuning.dart';
 import '../background/bg_service.dart';
 import '../net/deep_link.dart';
 import '../serial/channel_config.dart';
@@ -52,6 +53,52 @@ class AppState extends ChangeNotifier {
     _themeMode = v;
     notifyListeners();
     _put('themeMode', v);
+  }
+
+  // ---------- 全局: 串口/性能(设置页可调, 影响收发及时性; 同步写入 AppTuning 供后端取用) ----------
+  int _readPollMs = AppTuning.readPollMs; // 读取轮询间隔(ms)
+  int get readPollMs => _readPollMs;
+  set readPollMs(int v) {
+    _readPollMs = v = v.clamp(1, 50);
+    AppTuning.readPollMs = v;
+    notifyListeners();
+    _put('readPollMs', v);
+  }
+
+  int _readTimeoutMs = AppTuning.readTimeoutMs; // 单次读取最大等待(ms)
+  int get readTimeoutMs => _readTimeoutMs;
+  set readTimeoutMs(int v) {
+    _readTimeoutMs = v = v.clamp(5, 200);
+    AppTuning.readTimeoutMs = v;
+    notifyListeners();
+    _put('readTimeoutMs', v);
+  }
+
+  int _rxBufKb = AppTuning.rxBufKb; // 驱动读缓冲(KB, Windows)
+  int get rxBufKb => _rxBufKb;
+  set rxBufKb(int v) {
+    _rxBufKb = v = v.clamp(4, 1024);
+    AppTuning.rxBufKb = v;
+    notifyListeners();
+    _put('rxBufKb', v);
+  }
+
+  int _maxLogLines = AppTuning.maxLogLines; // 日志最大保留行数
+  int get maxLogLines => _maxLogLines;
+  set maxLogLines(int v) {
+    _maxLogLines = v = v.clamp(500, 100000);
+    AppTuning.maxLogLines = v;
+    notifyListeners();
+    _put('maxLogLines', v);
+  }
+
+  int _bleScanSec = AppTuning.bleScanSec; // BLE 扫描时长(s)
+  int get bleScanSec => _bleScanSec;
+  set bleScanSec(int v) {
+    _bleScanSec = v = v.clamp(2, 30);
+    AppTuning.bleScanSec = v;
+    notifyListeners();
+    _put('bleScanSec', v);
   }
 
   // ---------- 两个板块各自的独立会话 ----------
@@ -188,6 +235,12 @@ class AppState extends ChangeNotifier {
         } catch (_) {}
       }
       _themeMode = p.getInt('themeMode') ?? _themeMode;
+      // 串口/性能参数: 通过 setter 写入(顺带同步到 AppTuning, 后端立刻可用)
+      readPollMs = p.getInt('readPollMs') ?? _readPollMs;
+      readTimeoutMs = p.getInt('readTimeoutMs') ?? _readTimeoutMs;
+      rxBufKb = p.getInt('rxBufKb') ?? _rxBufKb;
+      maxLogLines = p.getInt('maxLogLines') ?? _maxLogLines;
+      bleScanSec = p.getInt('bleScanSec') ?? _bleScanSec;
       notifyListeners();
     } catch (_) {
       // 持久化不可用时不阻塞启动

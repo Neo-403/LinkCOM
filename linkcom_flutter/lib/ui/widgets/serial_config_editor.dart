@@ -7,12 +7,16 @@ class SerialConfigEditor extends StatefulWidget {
   final AggConfig initialAgg;
   final void Function(SerialConfig, AggConfig) onApply;
   final bool enabled;
+
+  /// 安卓 USB-OTG 上「数据位/停止位」改不了(底层 CH340/CH341 驱动是空实现) → 置灰并说明
+  final bool noDataStopBits;
   const SerialConfigEditor({
     super.key,
     required this.initialCfg,
     required this.initialAgg,
     required this.onApply,
     this.enabled = true,
+    this.noDataStopBits = false,
   });
   @override
   State<SerialConfigEditor> createState() => _SerialConfigEditorState();
@@ -74,6 +78,8 @@ class _SerialConfigEditorState extends State<SerialConfigEditor> {
   @override
   Widget build(BuildContext context) {
     final en = widget.enabled;
+    // 安卓 USB-OTG: 数据位/停止位置灰(底层驱动空实现, 设了也不生效)
+    final dsEn = en && !widget.noDataStopBits;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -83,9 +89,9 @@ class _SerialConfigEditorState extends State<SerialConfigEditor> {
           children: [
             _num('波特率', _cfg.baudRate, _bauds, en,
                 (v) => _emit(_cfg.copyWith(baudRate: v))),
-            _num('数据位', _cfg.dataBits, _dataBits, en,
+            _num('数据位', _cfg.dataBits, _dataBits, dsEn,
                 (v) => _emit(_cfg.copyWith(dataBits: v))),
-            _str('停止位', _stopCode(_cfg.stopBits), _stopBits, en,
+            _str('停止位', _stopCode(_cfg.stopBits), _stopBits, dsEn,
                 (v) => _emit(_cfg.copyWith(stopBits: _stopEnum(v)))),
             _str('校验', _cfg.parity.name, _parity, en,
                 (v) => _emit(_cfg.copyWith(parity: Parity.values.firstWhere((e) => e.name == v)))),
@@ -93,6 +99,19 @@ class _SerialConfigEditorState extends State<SerialConfigEditor> {
                 (v) => _emit(_cfg.copyWith(flowControl: FlowControl.values.firstWhere((e) => e.name == v)))),
           ],
         ),
+        // if (widget.noDataStopBits)
+        //   Padding(
+        //     padding: const EdgeInsets.only(top: 6),
+        //     child: Text(
+        //         '安卓 USB-OTG 的「数据位/停止位」不支持修改: 底层 CH340/CH341 驱动为空实现, '
+        //         '实际固定 8 位数据位 / 1 位停止位 (波特率与校验正常生效)',
+        //         style: TextStyle(
+        //             fontSize: 11,
+        //             color: Theme.of(context)
+        //                 .colorScheme
+        //                 .onSurface
+        //                 .withValues(alpha: 0.6))),
+        //   ),
       ],
     );
   }
